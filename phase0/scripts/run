@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+
+exec docker compose \
+  -f "$repo_root/phase0/compose.yaml" \
+  up --build --remove-orphans

@@ -1,0 +1,9 @@
+services:
+  harness:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: orphion-phase0:0.1.0
+    ports:
+      - "127.0.0.1:8090:80"
+    restart: "no"
