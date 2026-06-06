@@ -6,7 +6,7 @@
 
 **Architecture:** A small static TypeScript application serves deterministic same-origin video/HLS fixtures and three subtitle-rendering variants. It has no database, provider integration, production backend, or reusable Phase 1 application code. The final deliverable is a manual compatibility report that the user must approve before Phase 1 starts.
 
-**Tech Stack:** Node.js 24.1.0, npm with committed lockfile, TypeScript 5.8.3, Vite 6.3.5, hls.js 1.6.5, Vitest 3.2.1, Docker Compose 2.35.1, nginx 1.28.0-alpine
+**Tech Stack:** Node.js 24.1.0, npm with committed lockfile, TypeScript 5.8.3, Vite 6.4.3, hls.js 1.6.5, Vitest 4.1.8, Docker Compose 2.35.1, nginx 1.28.0-alpine
 
 ---
 
@@ -74,8 +74,8 @@ Use exact dependency versions, without caret or tilde ranges:
     "@types/node": "22.15.29",
     "jsdom": "26.1.0",
     "typescript": "5.8.3",
-    "vite": "6.3.5",
-    "vitest": "3.2.1"
+    "vite": "6.4.3",
+    "vitest": "4.1.8"
   }
 }
 ```
