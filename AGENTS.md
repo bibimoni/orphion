@@ -2,145 +2,113 @@
 
 ## Project
 
-Orphion is a localhost anime streaming web application designed for custom SRT
-subtitles, saved watch progress, and direct Migaku sentence mining.
+Orphion is a Go CLI that searches an AllAnime-derived source and downloads
+selected episodes as MKV files through system FFmpeg.
 
-Read these documents before making changes:
+Read before changing code:
 
-1. `docs/superpowers/specs/2026-06-07-orphion-phase-0-phase-1-design.md`
-2. `docs/infrastructure.md`
-3. `docs/superpowers/plans/2026-06-07-phase-0-migaku-compatibility.md`
-4. `docs/superpowers/plans/2026-06-07-phase-1-orphion-application.md`
+1. `docs/architecture.md`
+2. `docs/usage.md`
+3. `docs/implementation-plan.md`
 
-## Phase Gate
+## Scope
 
-Phase 0 is a disposable Migaku compatibility test. Do not implement Phase 1
-application code until `docs/phase0/migaku-compatibility-report.md` contains:
+Phase 1 is a command-line downloader only.
 
-```text
-PHASE 0 RESULT: PASS
-PHASE 1 AUTHORIZED: YES
-```
+Do not add:
 
-Phase 0 must not introduce PostgreSQL, the live anime provider, production
-proxy code, or reusable application architecture.
+- A web server or frontend.
+- Docker.
+- A database.
+- Playback.
+- Migaku integration.
+- Subtitle downloading.
+- Watch-progress tracking.
+- Accounts or profiles.
+- Download resume.
+- A dynamic provider-plugin runtime.
+- An ani-cli wrapper.
 
-## Development Environment
+ani-cli may be researched as a behavioral reference. Orphion must not execute,
+parse output from, vendor, or depend on ani-cli.
 
-- Develop, test, debug, install dependencies, and run migrations inside the
-  development container.
-- Use `scripts/create_docker`, `scripts/run_docker`, `scripts/install`,
-  `scripts/run`, `scripts/test`, and `scripts/migrate`.
-- Bind the application only to `127.0.0.1` unless a reviewed requirement
-  explicitly changes that behavior.
-- Development application data and PostgreSQL data must both use configurable
-  host bind mounts.
-- Never replace the development PostgreSQL bind mount with an anonymous volume.
-- Do not delete, recreate, or migrate user data destructively without explicit
-  approval and a documented backup path.
+## Runtime
 
-Default development data roots:
+- One Go binary.
+- System FFmpeg is the only external runtime dependency.
+- Use `exec.CommandContext` with explicit arguments; never invoke FFmpeg
+  through a shell.
+- macOS is the initial supported platform.
+- Keep process and filesystem code portable where practical.
 
-```text
-macOS:
-  ~/Library/Application Support/Orphion/dev/app
-  ~/Library/Application Support/Orphion/dev/postgres
+## Configuration
 
-Linux:
-  ${XDG_DATA_HOME:-$HOME/.local/share}/orphion/dev/app
-  ${XDG_DATA_HOME:-$HOME/.local/share}/orphion/dev/postgres
-```
+- Configuration path is `~/.config/orphion/config.yaml`.
+- YAML decoding must reject unknown fields.
+- Flags override YAML.
+- Missing configuration uses defaults.
+- Concurrency defaults to 1 and must remain between 1 and 4.
+- Preferred quality defaults to `1080p`.
+- Never overwrite an existing configuration from `config init`.
 
-## Version Policy
+## Architecture
 
-- Never use `:latest`.
-- Never omit a Docker image tag.
-- Pin every Docker `FROM` and Compose `image` to an explicit version.
-- Pin Go with the `go` and `toolchain` directives plus `.go-version`.
-- Pin Node.js with `.node-version` and matching Docker images.
-- Use exact frontend dependency versions and commit `package-lock.json`.
-- Commit `go.mod` and `go.sum`.
-- Do not update unrelated dependencies while implementing a feature or bugfix.
-- Run the repository version-policy check before completing container changes.
+- Keep interactive and non-interactive commands thin.
+- Both modes must use the same application service.
+- Keep provider-specific behavior inside `internal/provider/allanime`.
+- Treat provider anime and episode IDs as opaque.
+- Keep episode parsing, quality selection, path creation, scheduling, and
+  FFmpeg execution in separate focused packages.
+- Avoid global mutable state.
+- Pass contexts through provider, scheduler, and process boundaries.
 
-## Architecture Rules
+## Downloads
 
-- Keep Orphion a modular Go/Gin monolith with a small React/TypeScript client.
-- Serve the production frontend from the Go application.
-- Keep provider-specific requests, decoding, headers, host policy, and errors
-  inside the provider package.
-- Use a compile-time provider registry in Phase 1. Do not add a dynamic plugin
-  runtime.
-- Treat provider anime and episode IDs as opaque strings.
-- Do not expose upstream media URLs to the browser.
-- Proxy media only through expiring playback sessions and opaque resource IDs.
-- Parse HLS manifests structurally. Do not rewrite playlists with regular
-  expressions.
-- Apply SSRF protections to initial URLs, DNS results, and every redirect.
-- Do not implement DRM bypass or proprietary authorization circumvention.
+- Output layout is `<output>/<Anime Title>/Episode NN.mkv`.
+- Download to `.part.mkv`.
+- Rename to `.mkv` only after FFmpeg succeeds.
+- Remove partial files after failure or cancellation.
+- Do not overwrite existing final files by default.
+- Stop scheduling new work after cancellation.
+- One episode failure must not cancel unrelated jobs.
+- Return a non-zero aggregate exit status when any requested download fails.
 
-## Migaku Contract
+## Provider
 
-- The Phase 0-approved player DOM arrangement is a compatibility contract.
-- Use a normal HTML5 `<video>` element.
-- Do not move required media/subtitle state into an iframe or closed shadow
-  root.
-- Preserve the approved native track and/or selectable DOM subtitle structure.
-- Migaku-generated subtitles may be persisted only through a documented API or
-  a user-exported SRT/WebVTT file.
-- Do not read Migaku private extension storage, intercept undocumented traffic,
-  or depend on private extension internals.
-
-## Persistence
-
-- PostgreSQL stores profile, library, progress, and subtitle metadata.
-- Uploaded SRT files are stored under generated names in mounted application
-  storage; never use an uploaded filename as a filesystem path.
-- Preserve original SRT bytes and generate WebVTT/JSON cues from normalized
-  parsed data.
-- Every user-owned table must include `profile_id`, even while only the seeded
-  default profile exists.
-- Database migrations are explicit. Production startup verifies schema state
-  but does not silently migrate.
+- Implement the AllAnime-derived source directly in Go.
+- Use an injected `http.Client`.
+- Keep GraphQL, decoding, headers, host rules, and error translation private to
+  the adapter.
+- Regular tests use sanitized fixtures and never contact the live provider.
+- Live tests require `ORPHION_LIVE_PROVIDER_TEST=1`.
+- Never log full signed URLs, cookies, or sensitive request headers.
+- Do not implement DRM, authentication, or paywall bypass.
 
 ## Testing
 
 - Use test-driven development for features and bug fixes.
-- Keep deterministic tests independent of the live anime provider.
-- Run live-provider smoke tests only through the explicit opt-in flag.
-- Test provider implementations with the shared provider contract suite.
-- Test proxy behavior with local fixture servers, including redirects, keys,
-  ranges, cancellation, timeouts, and prohibited destinations.
-- Run Go tests with the race detector for concurrent playback/session code.
-- Test the React player against the exact Phase 0-approved DOM contract.
-- Repeat the manual Migaku regression before declaring Phase 1 complete.
-- Verify that application and PostgreSQL data survive development-container
-  recreation.
+- Run `go test -race ./...` before completion.
+- Test cancellation and process termination with a fake FFmpeg executable.
+- Test scheduler concurrency with controlled runners.
+- Test path containment and traversal resistance.
+- Test all CLI exit codes.
+- Keep live-provider instability out of deterministic tests.
+
+## Versioning
+
+- Pin the Go language/toolchain versions in `go.mod` and `.go-version`.
+- Pin direct Go dependencies to reviewed versions.
+- Do not update unrelated dependencies during feature work.
+- FFmpeg is user-installed; validate its presence and report its version in
+  verbose diagnostics.
 
 ## Code Quality
 
-- Follow existing package boundaries and keep files focused.
-- Prefer standard-library and existing project facilities over new
-  dependencies.
-- Add a dependency only when it removes substantial implementation risk or
+- Prefer the standard library unless a dependency removes meaningful
   complexity.
-- Return stable public error codes without leaking upstream URLs, secrets, or
-  decoder internals.
-- Keep UI styling plain, semantic, keyboard accessible, and free of unnecessary
-  component frameworks or animation libraries.
-- Update relevant documentation when configuration, scripts, architecture, or
-  operational behavior changes.
-
-## Scope
-
-Phase 1 does not include:
-
-- Authentication or multiple selectable profiles.
-- Windows support.
-- Episode downloads or offline playback.
-- A second live provider.
-- ASS/SSA subtitle uploads.
-- A provider marketplace.
-
-Do not add excluded features without an approved design update.
-
+- Keep errors typed internally and concise for users.
+- Add context with `%w` wrapping.
+- Do not call `os.Exit` outside `cmd/orphion/main.go`.
+- Do not build command strings with provider-controlled input.
+- Keep files and packages focused on one responsibility.
+- Update architecture and usage documentation when behavior changes.

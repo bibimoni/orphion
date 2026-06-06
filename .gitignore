@@ -1,8 +1,7 @@
 .DS_Store
-.superpowers/
 .worktrees/
 clipboard-*.png
 
-phase0/node_modules/
-phase0/dist/
-
+dist/
+coverage/
+*.test
