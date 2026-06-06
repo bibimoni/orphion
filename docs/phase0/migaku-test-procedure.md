@@ -138,4 +138,3 @@ The approved player contract must identify:
 
 Complete `docs/phase0/migaku-compatibility-report.md`. Do not begin Phase 1
 until the user sets `PHASE 1 AUTHORIZED: YES`.
-

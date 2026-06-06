@@ -1,19 +1,19 @@
 # Migaku Compatibility Report
 
-**Status:** Awaiting manual test  
-**Test date:** Not recorded
+**Status:** Ready for manual test
+**Test date:** 2026-06-07
 
 ## Environment
 
 | Item | Value |
 |---|---|
-| macOS | Not recorded |
-| Google Chrome | Not recorded |
+| macOS | 26.4.1 (build 25E253) |
+| Google Chrome | 148.0.7778.216 |
 | Migaku extension | Not recorded |
 | Migaku version/channel | Not recorded |
 | Migaku language/course | Not recorded |
 | Relevant Migaku settings | Not recorded |
-| Harness commit | Not recorded |
+| Harness commit | `69f5725eb31033d37a8878ec1c7b37f5797757f6` |
 | Harness URL | `http://127.0.0.1:8090` |
 
 ## Automated Harness Verification
@@ -196,4 +196,3 @@ APPROVED PLAYER CONTRACT: NOT SELECTED
 PHASE 1 AUTHORIZED: NO
 USER APPROVAL DATE:
 ```
-
