@@ -10,7 +10,7 @@
 #
 # What this script does:
 #   1. Detects your OS (macOS, Linux, WSL)
-#   2. Installs Go 1.24+ if missing (brew, apt, or official tarball)
+#   2. Installs Go 1.26+ if missing (brew, apt, or official tarball)
 #   3. Clones the Orphion repository
 #   4. Builds the binary to /usr/local/bin/orphion
 #   5. Installs golangci-lint for development
@@ -105,7 +105,7 @@ get_go_download_url() {
         *)              error "Unsupported architecture: $arch"; return 1;;
     esac
 
-    echo "https://golang.org/dl/go1.24.4.${os_go}-${arch_go}.tar.gz"
+    echo "https://golang.org/dl/go1.26.4.${os_go}-${arch_go}.tar.gz"
 }
 
 # ==============================================================================
@@ -121,13 +121,13 @@ install_go() {
         return 0
     fi
 
-    warn "Go is not installed. Installing Go 1.24.4..."
+    warn "Go is not installed. Installing Go 1.26..."
     echo ""
 
     # macOS: Homebrew
     if [ "$PM" = "homebrew" ]; then
         info "Installing Go via Homebrew..."
-        brew install go@1.24 || {
+        brew install go@1.26 || {
             error "Installation via Homebrew failed."
             return 1
         }
@@ -167,7 +167,7 @@ install_go() {
 
     error "Cannot install Go automatically on this OS."
     echo ""
-    echo "  Please install Go 1.24+ from https://go.dev/dl/"
+    echo "  Please install Go 1.26+ from https://go.dev/dl/"
     echo ""
     return 1
 }
