@@ -15,8 +15,6 @@ import (
 	"github.com/distiled/orphion/internal/ffmpeg"
 	"github.com/distiled/orphion/internal/provider"
 	"github.com/distiled/orphion/internal/provider/allanime"
-	"github.com/distiled/orphion/internal/provider/nyaa"
-	"github.com/distiled/orphion/internal/torrent"
 )
 
 func main() {
@@ -44,7 +42,7 @@ func main() {
 	providerName := normalizeProviderName(cfg.Provider)
 	contentProvider, ok := providers[providerName]
 	if !ok {
-		fmt.Fprintf(os.Stderr, "orphion: provider: unknown provider %q (available: allanime, nyaa)\n", cfg.Provider)
+		fmt.Fprintf(os.Stderr, "orphion: provider: unknown provider %q (available: allanime)\n", cfg.Provider)
 		os.Exit(2)
 	}
 
@@ -54,17 +52,12 @@ func main() {
 		os.Exit(2)
 	}
 
-	// Create torrent client for magnet URI downloads (lazy-init on first use).
-	torrentClient := torrent.NewClient(torrent.Config{DataDir: filepath.Join(expandTilde(cfg.OutputDir), ".torrents")})
-	defer func() { _ = torrentClient.Close() }()
-
 	appCfg := app.Config{
-		OutputDir:     cfg.OutputDir,
-		Concurrency:   cfg.Concurrency,
-		PreferredQty:  cfg.PreferredQuality,
-		TorrentClient: torrentClient,
-		ProviderName:  providerName,
-		Providers:     providers,
+		OutputDir:    cfg.OutputDir,
+		Concurrency:  cfg.Concurrency,
+		PreferredQty: cfg.PreferredQuality,
+		ProviderName: providerName,
+		Providers:    providers,
 	}
 	service := app.New(contentProvider, runner, appCfg)
 
@@ -80,10 +73,8 @@ func newProvider(name string) (provider.Provider, error) {
 	switch name {
 	case "allanime", "catalog":
 		return allanime.NewProvider(allanime.DefaultConfig())
-	case "nyaa":
-		return nyaa.NewProvider(nyaa.DefaultConfig())
 	default:
-		return nil, fmt.Errorf("unknown provider %q (available: allanime, nyaa)", name)
+		return nil, fmt.Errorf("unknown provider %q (available: allanime)", name)
 	}
 }
 
@@ -92,13 +83,8 @@ func newProviders() (map[string]provider.Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	nyaaProvider, err := newProvider("nyaa")
-	if err != nil {
-		return nil, err
-	}
 	return map[string]provider.Provider{
 		"allanime": allanimeProvider,
-		"nyaa":     nyaaProvider,
 	}, nil
 }
 
@@ -140,17 +126,4 @@ func classifyError(err error) int {
 	default:
 		return 1
 	}
-}
-
-func expandTilde(path string) string {
-	if path == "" {
-		return path
-	}
-	if path[0] == '~' {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			return filepath.Join(home, path[1:])
-		}
-	}
-	return path
 }

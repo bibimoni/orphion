@@ -19,8 +19,8 @@ func TestSetDefaults(t *testing.T) {
 	if cfg.Concurrency != 1 {
 		t.Errorf("default concurrency = %d, want 1", cfg.Concurrency)
 	}
-	if cfg.Provider != "nyaa" {
-		t.Errorf("default provider = %q, want %q", cfg.Provider, "nyaa")
+	if cfg.Provider != "allanime" {
+		t.Errorf("default provider = %q, want %q", cfg.Provider, "allanime")
 	}
 	if cfg.FFmpegPath != "ffmpeg" {
 		t.Errorf("default ffmpeg_path = %q, want %q", cfg.FFmpegPath, "ffmpeg")
@@ -184,8 +184,8 @@ func TestLoadConfigAppliesDefaultsForOmittedFields(t *testing.T) {
 	if cfg.Concurrency != 1 {
 		t.Errorf("Concurrency = %d, want 1", cfg.Concurrency)
 	}
-	if cfg.Provider != "nyaa" {
-		t.Errorf("Provider = %q, want %q", cfg.Provider, "nyaa")
+	if cfg.Provider != "allanime" {
+		t.Errorf("Provider = %q, want %q", cfg.Provider, "allanime")
 	}
 	if cfg.FFmpegPath != "ffmpeg" {
 		t.Errorf("FFmpegPath = %q, want %q", cfg.FFmpegPath, "ffmpeg")

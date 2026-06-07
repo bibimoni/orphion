@@ -20,11 +20,9 @@ type Config struct {
 
 // Progress holds a snapshot of FFmpeg download progress.
 type Progress struct {
-	Bytes      int64  // total_size from FFmpeg, or downloaded bytes for torrents
-	TotalBytes int64  // total torrent size when known
-	Speed      string // speed from FFmpeg (e.g. "1.5x") or torrent byte speed
-	Peers      int    // active torrent peers when known
-	Seeders    int    // connected torrent seeders when known
+	Bytes      int64  // downloaded bytes
+	TotalBytes int64  // total size when known
+	Speed      string // download speed (e.g. "1.5x" or "2.5 MiB/s")
 	TimeMs     int64  // out_time_ms from FFmpeg
 	Bitrate    string // bitrate from FFmpeg (e.g. "3400.0kbits/s")
 }

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/distiled/orphion/internal/download"
@@ -16,18 +15,16 @@ import (
 	"github.com/distiled/orphion/internal/paths"
 	"github.com/distiled/orphion/internal/provider"
 	"github.com/distiled/orphion/internal/quality"
-	"github.com/distiled/orphion/internal/torrent"
 )
 
 // Config holds application service configuration.
 type Config struct {
-	OutputDir     string
-	Concurrency   int
-	PreferredQty  string
-	Force         bool
-	TorrentClient *torrent.Client
-	ProviderName  string
-	Providers     map[string]provider.Provider
+	OutputDir    string
+	Concurrency  int
+	PreferredQty string
+	Force        bool
+	ProviderName string
+	Providers    map[string]provider.Provider
 }
 
 // ProgressCallback receives progress updates during a download.
@@ -35,14 +32,13 @@ type ProgressCallback func(episode string, progress ffmpeg.Progress)
 
 // Service orchestrates content lookup and download.
 type Service struct {
-	provider      provider.Provider
-	scheduler     *download.Scheduler
-	runner        *ffmpeg.Runner
-	torrentClient *torrent.Client
-	config        Config
-	progressCb    ProgressCallback
-	providerName  string
-	providers     map[string]provider.Provider
+	provider     provider.Provider
+	scheduler    *download.Scheduler
+	runner       *ffmpeg.Runner
+	config       Config
+	progressCb   ProgressCallback
+	providerName string
+	providers    map[string]provider.Provider
 }
 
 // New creates a new app service.
@@ -55,13 +51,12 @@ func New(p provider.Provider, runner *ffmpeg.Runner, cfg Config) *Service {
 		providers[cfg.ProviderName] = p
 	}
 	return &Service{
-		provider:      p,
-		scheduler:     download.NewScheduler(cfg.Concurrency),
-		runner:        runner,
-		torrentClient: cfg.TorrentClient,
-		config:        cfg,
-		providerName:  cfg.ProviderName,
-		providers:     providers,
+		provider:     p,
+		scheduler:    download.NewScheduler(cfg.Concurrency),
+		runner:       runner,
+		config:       cfg,
+		providerName: cfg.ProviderName,
+		providers:    providers,
 	}
 }
 
@@ -134,7 +129,7 @@ func (s *Service) ProviderNames() []string {
 			names = append(names, s.providerName)
 		}
 	}
-	for _, name := range []string{"nyaa", "allanime", "catalog"} {
+	for _, name := range []string{"allanime", "catalog"} {
 		if name == s.providerName {
 			continue
 		}
@@ -143,7 +138,7 @@ func (s *Service) ProviderNames() []string {
 		}
 	}
 	for name := range s.providers {
-		if name == s.providerName || name == "nyaa" || name == "allanime" || name == "catalog" {
+		if name == s.providerName || name == "allanime" || name == "catalog" {
 			continue
 		}
 		names = append(names, name)
@@ -330,11 +325,6 @@ func (s *Service) executeJob(ctx context.Context, job download.Job) (string, err
 		}
 	}
 
-	// Route magnet URIs to the torrent client, everything else to FFmpeg.
-	if strings.HasPrefix(streamURL, "magnet:?") {
-		return s.executeTorrentJob(ctx, streamURL, baseDir, title, job.Episode, outPath)
-	}
-
 	if err := os.MkdirAll(filepath.Dir(partPath), 0o755); err != nil {
 		return "", fmt.Errorf("create output dir: %w", err)
 	}
@@ -364,54 +354,6 @@ func (s *Service) executeJob(ctx context.Context, job download.Job) (string, err
 	}
 
 	return outPath, nil
-}
-
-// executeTorrentJob downloads a torrent from a magnet URI.
-func (s *Service) executeTorrentJob(ctx context.Context, magnetURI, baseDir, title, episode, outPath string) (string, error) {
-	if s.torrentClient == nil {
-		return "", fmt.Errorf("torrent client not initialized (magnet URI provided but no torrent support)")
-	}
-
-	if err := os.MkdirAll(baseDir, 0o755); err != nil {
-		return "", fmt.Errorf("create output dir: %w", err)
-	}
-
-	// Wire torrent progress into the app's progress callback.
-	if s.progressCb != nil {
-		s.torrentClient.SetOnProgress(func(pct float64, downloaded, total int64, speedBps float64, peers, seeders int) {
-			if pct < 0 {
-				s.progressCb(episode, ffmpeg.Progress{Speed: "metadata", TotalBytes: total})
-				return
-			}
-			speed := humanizeSpeed(speedBps)
-			s.progressCb(episode, ffmpeg.Progress{
-				Bytes:      downloaded,
-				TotalBytes: total,
-				Speed:      speed,
-				Peers:      peers,
-				Seeders:    seeders,
-			})
-		})
-	}
-
-	paths, err := s.torrentClient.Download(ctx, magnetURI, baseDir)
-	if err != nil {
-		return "", fmt.Errorf("torrent: %w", err)
-	}
-
-	if len(paths) == 0 {
-		return "", fmt.Errorf("torrent: no files downloaded")
-	}
-
-	// If a single file was downloaded, try to move it to the expected output path.
-	if len(paths) == 1 && outPath != "" {
-		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err == nil {
-			_ = os.Rename(paths[0], outPath)
-			return outPath, nil
-		}
-	}
-
-	return paths[0], nil
 }
 
 // SetOutputDir updates the output directory.
@@ -460,26 +402,6 @@ func parseSortKey(s string) float64 {
 	var val float64
 	_, _ = fmt.Sscanf(s, "%f", &val)
 	return val
-}
-
-// humanizeSpeed converts bytes/sec to a human-readable speed string
-// matching the format used by the FFmpeg progress display (e.g. "2.5 MiB/s").
-func humanizeSpeed(bps float64) string {
-	const (
-		kiB = 1024.0
-		miB = kiB * 1024
-		giB = miB * 1024
-	)
-	switch {
-	case bps >= giB:
-		return fmt.Sprintf("%.1f GiB/s", bps/giB)
-	case bps >= miB:
-		return fmt.Sprintf("%.1f MiB/s", bps/miB)
-	case bps >= kiB:
-		return fmt.Sprintf("%.1f KiB/s", bps/kiB)
-	default:
-		return fmt.Sprintf("%.0f B/s", bps)
-	}
 }
 
 func expandTilde(path string) string {

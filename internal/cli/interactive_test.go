@@ -34,14 +34,11 @@ func TestSelectInteractiveProviderSwitchesProviderWithoutImplyingType(t *testing
 		if defaultText != "Select provider:" {
 			t.Fatalf("default text = %q, want Select provider:", defaultText)
 		}
-		return "nyaa", nil
+		return "allanime", nil
 	}
 
 	allanimeProvider := &interactiveFakeProvider{
 		results: []provider.Anime{{ID: "allanime", Title: "AllAnime"}},
-	}
-	nyaaProvider := &interactiveFakeProvider{
-		results: []provider.Anime{{ID: "nyaa", Title: "Nyaa"}},
 	}
 	runner, _ := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
 	service := app.New(allanimeProvider, runner, app.Config{
@@ -50,23 +47,13 @@ func TestSelectInteractiveProviderSwitchesProviderWithoutImplyingType(t *testing
 		ProviderName: "allanime",
 		Providers: map[string]provider.Provider{
 			"allanime": allanimeProvider,
-			"nyaa":     nyaaProvider,
 		},
 	})
 
 	if err := selectInteractiveProvider(service); err != nil {
 		t.Fatal(err)
 	}
-	if got := service.ProviderName(); got != "nyaa" {
-		t.Fatalf("ProviderName() = %q, want nyaa", got)
-	}
-	if _, err := service.Search(context.Background(), "逃げ恥", ""); err != nil {
-		t.Fatal(err)
-	}
-	if got := nyaaProvider.kinds; len(got) != 1 || got[0] != "" {
-		t.Fatalf("Nyaa search kinds = %v, want empty kind", got)
-	}
-	if len(allanimeProvider.kinds) != 0 {
-		t.Fatalf("AllAnime was searched: %v", allanimeProvider.kinds)
+	if got := service.ProviderName(); got != "allanime" {
+		t.Fatalf("ProviderName() = %q, want allanime", got)
 	}
 }

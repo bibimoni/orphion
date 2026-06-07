@@ -12,13 +12,12 @@ import (
 
 func TestEpisodeOptionUsesSourceMetadata(t *testing.T) {
 	got := episodeOption(provider.Episode{
-		Number:  "1",
-		Title:   "逃げるは恥だが役に立つ 第一話/NIGERUHA.HAJIDAGA.YAKUNITATSU.Ep01.mp4",
-		Size:    "304.9 MiB",
-		Seeders: 1,
+		Number: "1",
+		Title:  "逃げるは恥だが役に立つ 第一話/NIGERUHA.HAJIDAGA.YAKUNITATSU.Ep01.mp4",
+		Size:   "304.9 MiB",
 	})
 
-	for _, want := range []string{"Ep 1", "304.9 MiB", "seeders=1", "第一話"} {
+	for _, want := range []string{"Ep 1", "304.9 MiB", "第一話"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("episode option = %q, want %q", got, want)
 		}
@@ -32,10 +31,9 @@ func TestEpisodeOptionFitsTerminalWidth(t *testing.T) {
 	t.Cleanup(func() { pterm.SetForcedTerminalSize(oldWidth, oldHeight) })
 
 	got := episodeOption(provider.Episode{
-		Number:  "1",
-		Title:   "逃げるは恥だが役に立つ 第一話/NIGERUHA.HAJIDAGA.YAKUNITATSU.Ep01.Chi_Jap.HDTVrip.852X480-ZhuixinFan.mp4",
-		Size:    "304.9 MiB",
-		Seeders: 1,
+		Number: "1",
+		Title:  "逃げるは恥だが役に立つ 第一話/NIGERUHA.HAJIDAGA.YAKUNITATSU.Ep01.Chi_Jap.HDTVrip.852X480-ZhuixinFan.mp4",
+		Size:   "304.9 MiB",
 	})
 
 	// Leave room for pterm's selector and checkbox prefix.
