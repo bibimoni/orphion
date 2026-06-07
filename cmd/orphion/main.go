@@ -42,8 +42,9 @@ func main() {
 	providerName := normalizeProviderName(cfg.Provider)
 	contentProvider, ok := providers[providerName]
 	if !ok {
-		fmt.Fprintf(os.Stderr, "orphion: provider: unknown provider %q (available: allanime)\n", cfg.Provider)
-		os.Exit(2)
+		fmt.Fprintf(os.Stderr, "orphion: provider: unknown provider %q, falling back to allanime\n", cfg.Provider)
+		providerName = "allanime"
+		contentProvider = providers[providerName]
 	}
 
 	runner, err := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: cfg.FFmpegPath})
