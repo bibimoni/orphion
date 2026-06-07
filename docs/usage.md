@@ -27,36 +27,44 @@ orphion
 
 The CLI asks for:
 
-1. Anime search text.
-2. A result from the returned list.
-3. Episodes or ranges.
-4. Output directory confirmation.
-5. Preferred quality and concurrency confirmation.
+1. Search text.
+2. A content type: anime or drama.
+3. A result from the returned list.
+4. Episodes or ranges.
+5. Output directory confirmation.
+6. Preferred quality and concurrency confirmation.
 
 It then downloads selected episodes and prints a summary.
 
 ## Search
 
 ```bash
-orphion search "Frieren"
+orphion search --type anime "Frieren"
 ```
 
 Example result:
 
 ```text
 ID                 TITLE
-allanime:abc123    Frieren: Beyond Journey's End
-allanime:def456    Frieren: Beyond Journey's End (Dub)
+catalog:abc123      Frieren: Beyond Journey's End
+catalog:def456      Frieren: Beyond Journey's End (Dub)
 ```
 
 Provider IDs are opaque. Copy them exactly when using non-interactive
 commands.
 
+Drama works the same way:
+
+```bash
+orphion search --type drama "My Demon"
+```
+
 ## Download by Search Text
 
 ```bash
 orphion download \
-  --anime "Frieren" \
+  --type anime \
+  --title "Frieren" \
   --episodes "1-4"
 ```
 
@@ -67,7 +75,8 @@ result. Otherwise, Orphion prints matching IDs and exits with code 3.
 
 ```bash
 orphion download \
-  --anime-id "allanime:abc123" \
+  --type anime \
+  --title-id "catalog:abc123" \
   --episodes "1,3,7" \
   --output "$HOME/Anime"
 ```
@@ -100,7 +109,8 @@ Set a preferred height:
 
 ```bash
 orphion download \
-  --anime-id "allanime:abc123" \
+  --type anime \
+  --title-id "catalog:abc123" \
   --episodes "1-4" \
   --quality 1080p
 ```
@@ -114,7 +124,8 @@ The default is one episode at a time:
 
 ```bash
 orphion download \
-  --anime-id "allanime:abc123" \
+  --type anime \
+  --title-id "catalog:abc123" \
   --episodes "1-8" \
   --concurrency 1
 ```
@@ -123,7 +134,8 @@ The allowed range is 1 through 4:
 
 ```bash
 orphion download \
-  --anime-id "allanime:abc123" \
+  --type anime \
+  --title-id "catalog:abc123" \
   --episodes "1-8" \
   --concurrency 4
 ```
@@ -173,7 +185,8 @@ Default content:
 output_dir: ~/Anime
 preferred_quality: 1080p
 concurrency: 1
-provider: allanime
+provider: catalog
+default_type: anime
 ffmpeg_path: ffmpeg
 ```
 
@@ -183,7 +196,8 @@ Flags override configuration:
 
 ```bash
 orphion download \
-  --anime-id "allanime:abc123" \
+  --type anime \
+  --title-id "catalog:abc123" \
   --episodes all \
   --output /Volumes/Media/Anime \
   --quality 720p \
@@ -194,7 +208,8 @@ orphion download \
 
 ```bash
 orphion --verbose download \
-  --anime-id "allanime:abc123" \
+  --type anime \
+  --title-id "catalog:abc123" \
   --episodes 1
 ```
 

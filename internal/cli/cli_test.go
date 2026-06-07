@@ -10,7 +10,7 @@ import (
 
 func TestVersion(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	root := cli.New()
+	root := cli.New(nil)
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
 	root.SetArgs([]string{"version"})

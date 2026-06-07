@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a Go CLI that searches an AllAnime-derived source and downloads selected episodes as MKV files through system FFmpeg.
+**Goal:** Build a Go CLI that searches a single unofficial catalog provider for anime and drama content, then downloads selected episodes as MKV files through system FFmpeg.
 
-**Architecture:** One Go binary provides interactive and non-interactive commands over shared application services. A provider interface isolates the unofficial source, while a bounded scheduler runs FFmpeg processes and atomically promotes successful partial downloads.
+**Architecture:** One Go binary provides interactive and non-interactive commands over shared application services. A provider interface isolates the unofficial catalog source, while a bounded scheduler runs FFmpeg processes and atomically promotes successful partial downloads.
 
 **Tech Stack:** Go 1.24.4; Cobra 1.9.1; pterm 0.12.81 for terminal prompts/output; yaml.v3 3.0.1; standard `net/http`, `os/exec`, filesystem, context, and signal packages; system FFmpeg
 
@@ -32,7 +32,7 @@ internal/
 │   ├── provider.go
 │   ├── registry.go
 │   ├── contract_test.go
-│   └── allanime/
+│   └── catalog/
 │       ├── client.go
 │       ├── decode.go
 │       ├── provider.go
@@ -390,23 +390,25 @@ git add internal/download
 git commit -m "feat: schedule bounded episode downloads"
 ```
 
-### Task 9: Implement the AllAnime-Derived Provider
+### Task 9: Implement the Catalog Provider
 
 **Files:**
-- Create: `internal/provider/allanime/client.go`
-- Create: `internal/provider/allanime/decode.go`
-- Create: `internal/provider/allanime/provider.go`
-- Create: `internal/provider/allanime/provider_test.go`
-- Create: `internal/provider/allanime/testdata/search.json`
-- Create: `internal/provider/allanime/testdata/episodes.json`
-- Create: `internal/provider/allanime/testdata/streams.json`
-- Create: `docs/provider-allanime.md`
+- Create: `internal/provider/catalog/client.go`
+- Create: `internal/provider/catalog/decode.go`
+- Create: `internal/provider/catalog/provider.go`
+- Create: `internal/provider/catalog/provider_test.go`
+- Create: `internal/provider/catalog/testdata/search.json`
+- Create: `internal/provider/catalog/testdata/episodes.json`
+- Create: `internal/provider/catalog/testdata/streams.json`
+- Create: `docs/provider-catalog.md`
 
 - [ ] **Step 1: Record sanitized fixtures**
 
 Research current ani-cli behavior and independently capture representative
-AllAnime search, episode, and stream responses. Record retrieval date and
-reference revision. Remove cookies, signed URLs, and personal data.
+catalog search, episode, and stream responses. Record retrieval date and
+reference revision. Remove cookies, signed URLs, and personal data. Use
+gonwatch behavior as the secondary reference for drama and other non-anime
+content groupings.
 
 - [ ] **Step 2: Write failing fixture-backed tests**
 
@@ -417,7 +419,7 @@ timeouts.
 - [ ] **Step 3: Implement the adapter**
 
 Use an injected `http.Client`. Keep all endpoints, decoding, headers, and host
-rules inside this package. Do not import or execute ani-cli.
+rules inside this package. Do not import or execute ani-cli or gonwatch.
 
 - [ ] **Step 4: Run contract tests**
 
@@ -433,13 +435,13 @@ Require:
 ORPHION_LIVE_PROVIDER_TEST=1
 ```
 
-Regular tests must not contact AllAnime.
+Regular tests must not contact the live catalog.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add internal/provider/allanime docs/provider-allanime.md
-git commit -m "feat: add AllAnime-derived provider"
+git add internal/provider/catalog docs/provider-catalog.md
+git commit -m "feat: add catalog provider"
 ```
 
 ### Task 10: Build the Shared Application Service
@@ -454,7 +456,7 @@ Test:
 
 - Search forwarding.
 - Ambiguous title detection.
-- Anime ID resolution.
+- Catalog ID resolution.
 - Episode selection.
 - Stream resolution.
 - Quality selection.
@@ -478,7 +480,7 @@ Interactive and non-interactive commands call the same methods.
 ```bash
 go test ./internal/app -v
 git add internal/app
-git commit -m "feat: orchestrate anime downloads"
+git commit -m "feat: orchestrate content downloads"
 ```
 
 ### Task 11: Implement Search and Non-Interactive Download Commands
@@ -574,7 +576,7 @@ go test ./cmd/orphion -v
 - [ ] **Step 3: Implement composition**
 
 Use `signal.NotifyContext` for interrupt/termination signals. Build the
-configuration, registry, AllAnime provider, FFmpeg runner, scheduler,
+configuration, registry, catalog provider, FFmpeg runner, scheduler,
 application service, and root command.
 
 - [ ] **Step 4: Verify and commit**

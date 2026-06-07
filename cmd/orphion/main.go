@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	if err := cli.New().Execute(); err != nil {
+	if err := cli.New(nil).Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "orphion:", err)
 		os.Exit(1)
 	}

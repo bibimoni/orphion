@@ -2,7 +2,10 @@ package cli
 
 import (
 	"fmt"
+	"os"
 
+	"github.com/distiled/orphion/internal/app"
+	"github.com/distiled/orphion/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -10,13 +13,22 @@ import (
 var Version = "dev"
 
 // New creates the root command for Orphion.
-func New() *cobra.Command {
+func New(service *app.Service) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "orphion",
 		Short: "Download anime and drama episodes",
 	}
 
-	versionCmd := &cobra.Command{
+	root.AddCommand(newVersionCmd())
+	root.AddCommand(newConfigCmd())
+	root.AddCommand(newSearchCmd(service))
+	root.AddCommand(newDownloadCmd(service))
+
+	return root
+}
+
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
 		Use:   "version",
 		Short: "Print the version",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -24,8 +36,95 @@ func New() *cobra.Command {
 			return nil
 		},
 	}
-	root.AddCommand(versionCmd)
-	root.AddCommand(newConfigCmd())
+}
 
+func newConfigCmd() *cobra.Command {
+	root := &cobra.Command{
+		Use:   "config",
+		Short: "Manage Orphion configuration",
+	}
+	root.AddCommand(&cobra.Command{
+		Use:   "init",
+		Short: "Create default configuration",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path := fmt.Sprintf("%s/.config/orphion/config.yaml", os.Getenv("HOME"))
+			return config.Init(path)
+		},
+	})
 	return root
+}
+
+func newSearchCmd(service *app.Service) *cobra.Command {
+	return &cobra.Command{
+		Use:   "search",
+		Short: "Search for anime and drama titles",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if service == nil {
+				return fmt.Errorf("service not configured")
+			}
+			result, err := service.Search(cmd.Context(), args[0], "")
+			if err != nil {
+				return err
+			}
+			for _, a := range result.Anime {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", a.ID, a.Title)
+			}
+			return nil
+		},
+	}
+}
+
+func newDownloadCmd(service *app.Service) *cobra.Command {
+	var (
+		episodes string
+		title    string
+		animeID  string
+		resType  string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "download",
+		Short: "Download anime episodes",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if service == nil {
+				return fmt.Errorf("service not configured")
+			}
+			if animeID == "" && title == "" {
+				return fmt.Errorf("--title-id or --title is required")
+			}
+			if resType == "" {
+				resType = "anime"
+			}
+			if episodes == "" {
+				return fmt.Errorf("--episodes is required")
+			}
+
+			id := animeID
+			if id == "" {
+				var err error
+				id, err = service.ResolveID(cmd.Context(), title, resType)
+				if err != nil {
+					return err
+				}
+			}
+
+			result, _, err := service.DownloadEpisodes(cmd.Context(), id, episodes)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "completed %d, failed %d\n", result.Completed, result.Failed)
+			if result.Failed > 0 {
+				return fmt.Errorf("some downloads failed")
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&episodes, "episodes", "", "Episode expression (e.g. 1-4,7)")
+	cmd.Flags().StringVar(&title, "title", "", "Search query")
+	cmd.Flags().StringVar(&animeID, "title-id", "", "Anime ID")
+	cmd.Flags().StringVar(&resType, "type", "anime", "Content type: anime or drama")
+
+	return cmd
 }

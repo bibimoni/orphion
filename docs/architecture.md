@@ -2,13 +2,15 @@
 
 ## Purpose
 
-Orphion is a Go command-line tool for finding anime episodes from an
-AllAnime-derived source and downloading them as MKV files into a user-selected
-folder.
+Orphion is a Go command-line tool for finding anime and drama episodes from a
+single unofficial catalog provider and downloading them as MKV files into a
+user-selected folder.
 
 Orphion does not run a server, browser interface, database, Docker environment,
 or media player. It does not execute or wrap ani-cli. ani-cli is used only as a
-behavioral reference for the unofficial AllAnime integration.
+behavioral reference for the unofficial anime-focused parts of the catalog,
+while `gonwatch` is the broader reference for anime, drama, and other content
+groupings.
 
 ## Scope
 
@@ -16,7 +18,7 @@ Phase 1 includes:
 
 - Interactive terminal operation.
 - Non-interactive commands and flags using the same application services.
-- Anime search.
+- Anime and drama search.
 - Episode listing and selection.
 - Episode expressions such as `1-4,7`.
 - Preferred-quality selection with downward fallback.
@@ -25,7 +27,7 @@ Phase 1 includes:
 - Deterministic output folders and filenames.
 - Partial-file cleanup after failure or cancellation.
 - YAML configuration at `~/.config/orphion/config.yaml`.
-- One independently implemented AllAnime-derived provider.
+- One independently implemented catalog provider that supports anime and drama.
 - macOS support with portable process and filesystem boundaries.
 
 Phase 1 excludes:
@@ -61,7 +63,7 @@ application services
    |
    +--> provider interface
    |      |
-   |      +--> AllAnime-derived adapter
+   |      +--> catalog adapter
    |
    +--> episode selection
    +--> quality selection
@@ -100,20 +102,22 @@ Conceptual interface:
 
 ```go
 type Provider interface {
-    Search(ctx context.Context, query string) ([]Anime, error)
-    Episodes(ctx context.Context, animeID string) ([]Episode, error)
+    Search(ctx context.Context, query, kind string) ([]Title, error)
+    Episodes(ctx context.Context, titleID string) ([]Episode, error)
     Streams(ctx context.Context, episodeID string) ([]Stream, error)
 }
 ```
 
 Provider identifiers are opaque strings. Consumers must not parse or build
-AllAnime identifiers.
+provider-specific identifiers.
 
-### `internal/provider/allanime`
+`kind` selects the catalog group, such as `anime` or `drama`.
+
+### `internal/provider/catalog`
 
 Owns all unofficial-source details:
 
-- GraphQL requests.
+- Requests and response mapping.
 - Query variables and response structures.
 - Source decoding.
 - Required upstream headers.
@@ -121,8 +125,8 @@ Owns all unofficial-source details:
 - Provider-specific error translation.
 - Allowed upstream hosts.
 
-It may reference observed ani-cli behavior, but must not copy code with
-incompatible licensing or invoke ani-cli.
+It may reference observed ani-cli behavior and gonwatch behavior, but must not
+copy code with incompatible licensing or invoke either project.
 
 ### `internal/episode`
 
@@ -185,7 +189,7 @@ renames.
 9. Create:
 
    ```text
-   <output>/<Sanitized Anime Title>/Episode 01.part.mkv
+   <output>/<Sanitized Title>/Episode 01.part.mkv
    ```
 
 10. Start FFmpeg with the stream URL and provider-required headers.
@@ -240,7 +244,8 @@ Shape:
 output_dir: ~/Anime
 preferred_quality: 1080p
 concurrency: 1
-provider: allanime
+provider: catalog
+default_type: anime
 ffmpeg_path: ffmpeg
 ```
 
@@ -261,7 +266,7 @@ Default:
 
 ```text
 <output>/
-└── <Anime Title>/
+└── <Title>/
     ├── Episode 01.mkv
     ├── Episode 02.mkv
     └── Episode 12.5.mkv
@@ -319,7 +324,7 @@ Automated tests cover:
 - Episode-expression parsing and resolution.
 - Quality fallback.
 - Filename and path sanitization.
-- AllAnime mapping and decoding using sanitized recorded fixtures.
+- Catalog mapping and decoding using sanitized recorded fixtures.
 - FFmpeg argument construction.
 - Partial cleanup and atomic rename.
 - Cancellation and child-process termination.
@@ -327,4 +332,4 @@ Automated tests cover:
 - CLI exit-code behavior.
 
 Regular tests never contact the live provider. An explicit opt-in smoke test
-verifies current AllAnime compatibility.
+verifies current catalog compatibility.
