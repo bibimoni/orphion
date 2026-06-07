@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/pterm/pterm"
@@ -91,28 +90,30 @@ func runInteractive(cmd *cobra.Command, service *app.Service) error {
 	}
 
 	// Step 6: Download with animated progress
-	pterm.Info.Printfln("Downloading %s episodes: %s", pterm.Cyan(selectedTitle), epExpr)
-
-	service.SetProgressCallback(downloadProgressCallback)
+	dlSpinner, _ := pterm.DefaultSpinner.Start("Getting episodes...")
+	service.SetProgressCallback(newProgressCallback(dlSpinner))
 
 	downloadResult, _, err := service.DownloadEpisodes(ctx, animeID, epExpr, selectedTitle)
 	if err != nil {
+		dlSpinner.Fail(fmt.Sprintf("Failed: %s", err))
 		return err
 	}
 
-	// Clear progress line and show final results.
-	fmt.Fprintln(os.Stderr)
-
-	if len(downloadResult.Outputs) > 0 {
-		dir := outputDirFor(downloadResult.Outputs[0])
-		pterm.Success.Printfln("Saved to %s", pterm.LightBlue(dir))
+	// Show per-episode failures.
+	if downloadResult.Failed > 0 {
+		dlSpinner.Fail(fmt.Sprintf("%d completed, %d failed", downloadResult.Completed, downloadResult.Failed))
+		for ep, epErr := range downloadResult.Errors {
+			pterm.Error.Printfln("  Episode %s: %s", ep, epErr)
+		}
+		return fmt.Errorf("%d download(s) failed", downloadResult.Failed)
 	}
 
-	if downloadResult.Failed > 0 {
-		pterm.Error.Printfln("%d completed, %d failed",
-			downloadResult.Completed, downloadResult.Failed)
+	// Show output directory for completed downloads.
+	if len(downloadResult.Outputs) > 0 {
+		dir := outputDirFor(downloadResult.Outputs[0])
+		dlSpinner.Success(fmt.Sprintf("Saved to %s", pterm.LightBlue(dir)))
 	} else {
-		pterm.Success.Printfln("%d episode(s) downloaded", downloadResult.Completed)
+		dlSpinner.Success(fmt.Sprintf("%d episode(s) downloaded", downloadResult.Completed))
 	}
 
 	return nil

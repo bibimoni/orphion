@@ -1,38 +1,85 @@
-# Orphion
+<!--
+*** Orphion — CLI for searching and downloading anime/drama episodes as MKV files
+*** Based on Best-README-Template by othneildrew
+*** See: https://github.com/othneildrew/Best-README-Template
+-->
 
-A command-line tool to search a catalog provider and download selected
-episodes as MKV files via system FFmpeg.
+<!-- PROJECT SHIELDS -->
+[![Contributors][contributors-shield]][contributors-url]
+[![Forks][forks-shield]][forks-url]
+[![Stargazers][stars-shield]][stars-url]
+[![Issues][issues-shield]][issues-url]
+[![License][license-shield]][license-url]
+[![Go Version][go-shield]][go-url]
 
-## Features
+<br />
+<div align="center">
 
-- **Zero-config first run** — works immediately, auto-creates config with sensible defaults
-- **Interactive mode** — guided search, selection, and download with animated UI
-- **Download progress** — live speed, size, and animated spinner during downloads
-- **Episode expressions** — download single episodes, ranges, lists, or all at once
-- **Quality selection** — prefers 1080p, falls back gracefully
-- **Concurrent downloads** — up to 4 episodes in parallel
+<h1 align="center">🎬 Orphion</h1>
 
-## Prerequisites
+  <p align="center">
+    A command-line tool to search an anime source and download<br/>
+    selected episodes as MKV files via system FFmpeg.
+    <br />
+    <br />
+    <a href="#usage"><strong>Explore the docs »</strong></a>
+    <br />
+    <br />
+  </p>
+</div>
 
-- **FFmpeg** — used to remux streams into MKV files
+<!-- ABOUT THE PROJECT -->
+## About The Project
+
+Orphion is a Go CLI that searches a catalog provider for anime
+and drama content, then downloads selected episodes as MKV
+files. It supports interactive prompts and non-interactive
+command-line flags backed by the same application services.
+
+**Phase 1 scope:** Command-line downloader only. No web server,
+database, Docker, playback, subtitles, or account management.
+
+<!-- GETTING STARTED -->
+## Getting Started
+
+### Prerequisites
+
+- **Go 1.24+** (check `.go-version` for the exact version)
+- **FFmpeg** — used to download and remux streams into MKV files
+
+Install FFmpeg:
 
 | Platform | Command |
-|----------|----------|
+|----------|---------|
 | macOS | `brew install ffmpeg` |
 | Ubuntu/Debian | `sudo apt install ffmpeg` |
+| Fedora | `sudo dnf install ffmpeg` |
 | Arch | `sudo pacman -S ffmpeg` |
+| Windows | Download from [ffmpeg.org](https://ffmpeg.org/download.html) |
 
-## Installation
+Verify the installation:
 
-### Install Script (recommended)
+```bash
+ffmpeg -version
+```
+
+### Installation
+
+#### Quick Install (recommended)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/bibimoni/orphion/main/install.sh | bash
 ```
 
-### Build From Source
+Or build manually:
 
-Requires Go 1.24+ (check `.go-version` for the exact version):
+```bash
+bash scripts/dev-setup.sh          # build + install
+bash scripts/dev-setup.sh --test    # also run tests
+bash scripts/dev-setup.sh --clean   # remove previous install first
+```
+
+Or clone and build from source:
 
 ```bash
 git clone https://github.com/bibimoni/orphion.git
@@ -41,25 +88,57 @@ go build -trimpath -ldflags="-s -w" -o dist/orphion ./cmd/orphion
 sudo cp dist/orphion /usr/local/bin/
 ```
 
+#### Configuration
+
+No configuration is required. On first run, Orphion auto-creates
+`~/.config/orphion/config.yaml` with sensible defaults:
+
+```yaml
+output_dir: ~/Anime
+preferred_quality: 1080p
+concurrency: 1
+provider: catalog
+ffmpeg_path: ffmpeg
+```
+
+You can also create it explicitly:
+
+```bash
+orphion config init
+```
+
+Flags override configuration values:
+
+```bash
+orphion download --output /Volumes/Media --quality 720p --concurrency 2 --episodes "1-4"
+```
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- USAGE -->
 ## Usage
 
 ### Interactive Mode
-
-Just run `orphion` with no arguments for a guided experience:
 
 ```bash
 orphion
 ```
 
+Orphion prompts for search text, content type (anime/drama), episode
+selection, and quality preferences — with animated spinners, colored
+results, and live download progress.
+
 ### CLI Commands
 
 | Command | Description |
 |---------|-------------|
-| `orphion` | Interactive mode |
-| `orphion search "Frieren"` | Search for titles |
-| `orphion download --title "Frieren" --episodes "1-4"` | Download episodes |
-| `orphion download --title-id "abc123" --episodes "1,3,7"` | Download by ID |
+| `orphion` | Interactive mode — guided prompts with animated UI |
+| `orphion search "Frieren" --type anime` | Search for titles |
+| `orphion download --title "Frieren" --episodes "1-4"` | Download by search |
+| `orphion download --title-id "catalog:abc123" --episodes "1,3,7"` | Download by ID |
+| `orphion config init` | Create default config |
 | `orphion version` | Show version |
+| `orphion help` | Show all commands |
 
 ### Episode Expressions
 
@@ -71,46 +150,91 @@ orphion
 all           All episodes
 ```
 
-### Output Structure
+### Output Layout
 
 ```
 ~/Anime/
-└── Frieren/
+└── Frieren-Beyond-Journeys-End/
     ├── Episode 01.mkv
     └── Episode 02.mkv
 ```
 
-## Configuration
+Downloads use `.part.mkv` during transfer and rename to `.mkv` only on success.
 
-On first run, Orphion auto-creates `~/.config/orphion/config.yaml` with defaults:
+### Exit Codes
 
-```yaml
-output_dir: ~/Anime
-preferred_quality: 1080p
-concurrency: 1
-provider: catalog
-ffmpeg_path: ffmpeg
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | One or more downloads failed |
+| 2 | Usage/configuration error |
+| 3 | Provider/search/selection error |
+| 130 | Interrupted |
+
+_For detailed documentation, see [docs/usage.md](docs/usage.md)._
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- ROADMAP -->
+## Roadmap
+
+- [x] Interactive and non-interactive CLI
+- [x] Anime and drama search
+- [x] Episode selection with quality fallback
+- [x] Configurable download concurrency
+- [x] Partial-file cleanup on failure
+- [x] YAML configuration
+- [x] Zero-config first run (auto-creates config)
+- [x] Animated TUI with spinners, colors, and progress
+- [x] Live download progress with speed and size stats
+- [x] Piped output detection (machine-readable for scripts)
+- [ ] Subtitle support
+- [ ] Download resume
+
+See the [implementation plan](docs/implementation-plan.md) for details.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- ARCHITECTURE -->
+## Architecture
+
+```
+CLI input
+   |
+   v
+command layer
+   |
+   +--> configuration
+   +--> interactive prompts
+   +--> non-interactive validation
+   |
+   v
+application services
+   |
+   +--> provider interface
+   |      |
+   |      +--> allanime adapter
+   |
+   +--> episode selection
+   +--> quality selection
+   +--> path generation
+   +--> download scheduler
+          |
+          +--> FFmpeg process runner (with progress)
 ```
 
-Edit the file to customize. You can also recreate it:
+All commands use shared application services. Provider-specific
+details are isolated inside `internal/provider/allanime`.
 
-```bash
-orphion config init    # errors if config already exists
-```
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-### CLI Flags (override config)
-
-| Flag | Description |
-|------|-------------|
-| `--output` | Output directory |
-| `--quality` | Preferred quality (e.g. 720p) |
-| `--concurrency` | Download concurrency (1-4) |
-| `--force` | Overwrite existing files |
-
+<!-- CONTRIBUTING -->
 ## Contributing
 
-Contributions are welcome. Before submitting a PR, review the project
-documentation in [`docs/`](docs/).
+Contributions are welcome. Before submitting a PR, please review:
+
+1. [`docs/architecture.md`](docs/architecture.md) — package boundaries
+2. [`docs/usage.md`](docs/usage.md) — user-facing documentation
 
 ### Dev Setup
 
@@ -119,8 +243,46 @@ git clone https://github.com/bibimoni/orphion.git
 cd orphion
 go mod download
 go test -race ./...
+
+# Pre-commit hooks
+brew install pre-commit
+pre-commit install
 ```
 
+### Testing
+
+```bash
+go test -race ./...
+go vet ./...
+golangci-lint run
+```
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- LICENSE -->
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+Distributed under the MIT License. See [`LICENSE`](LICENSE) for details.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- CONTACT -->
+## Contact
+
+Project Link: [https://github.com/bibimoni/orphion](https://github.com/bibimoni/orphion)
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- MARKDOWN LINKS & IMAGES -->
+[contributors-shield]: https://img.shields.io/github/contributors/bibimoni/orphion.svg?style=flat-square
+[contributors-url]: https://github.com/bibimoni/orphion/graphs/contributors
+[forks-shield]: https://img.shields.io/github/forks/bibimoni/orphion.svg?style=flat-square
+[forks-url]: https://github.com/bibimoni/orphion/network/members
+[stars-shield]: https://img.shields.io/github/stars/bibimoni/orphion.svg?style=flat-square
+[stars-url]: https://github.com/bibimoni/orphion/stargazers
+[issues-shield]: https://img.shields.io/github/issues/bibimoni/orphion.svg?style=flat-square
+[issues-url]: https://github.com/bibimoni/orphion/issues
+[license-shield]: https://img.shields.io/github/license/bibimoni/orphion.svg?style=flat-square
+[license-url]: https://github.com/bibimoni/orphion/blob/main/LICENSE
+[go-shield]: https://img.shields.io/github/go-mod/go-version/bibimoni/orphion?style=flat-square
+[go-url]: https://github.com/bibimoni/orphion

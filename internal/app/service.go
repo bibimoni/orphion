@@ -58,7 +58,8 @@ type DownloadResult struct {
 	Skipped   int
 	Cancelled int
 	Missing   []string
-	Outputs   []string // Output file paths for completed downloads
+	Outputs   []string         // Output file paths for completed downloads
+	Errors    map[string]error // Episode number → error for failed downloads
 }
 
 // Search performs a content search.
@@ -177,7 +178,9 @@ func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr, title str
 	}
 
 	var dr DownloadResult
-	for _, r := range results {
+	dr.Errors = make(map[string]error)
+	for i, r := range results {
+		epNum := jobs[i].Episode
 		switch r.Status {
 		case download.StatusCompleted:
 			dr.Completed++
@@ -186,6 +189,9 @@ func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr, title str
 			}
 		case download.StatusFailed:
 			dr.Failed++
+			if r.Err != nil {
+				dr.Errors[epNum] = r.Err
+			}
 		case download.StatusCancelled:
 			dr.Cancelled++
 		}
@@ -195,6 +201,11 @@ func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr, title str
 }
 
 func (s *Service) executeJob(ctx context.Context, job download.Job) (string, error) {
+	// Notify the UI that we're starting this episode.
+	if s.progressCb != nil {
+		s.progressCb(job.Episode, ffmpeg.Progress{})
+	}
+
 	streams, err := s.provider.Streams(ctx, job.ID)
 	if err != nil {
 		return "", fmt.Errorf("get streams: %w", err)
