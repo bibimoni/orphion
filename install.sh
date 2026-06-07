@@ -20,14 +20,7 @@ error() { printf '  %b[ERROR]%b   %s\n' "$RED" "$NC" "$*" >&2; }
 step()  { printf '\n%b==> %s%b\n' "$BOLD" "$*" "$NC"; }
 
 banner() {
-    printf '%b\n' "$CYAN"
-    printf '%s\n' '   ___        _     _'
-    printf '%s\n' '  / _ \ _ __| |__ (_) ___  _ __'
-    printf '%s\n' " | | | | '__| '_ \| |/ _ \| '_ \\"
-    printf '%s\n' ' | |_| | |  | | | | | (_) | | | |'
-    printf '%s\n' '  \___/|_|  |_| |_|_|\___/|_| |_|'
-    printf '%bAnime & Drama Downloader%b\n' "$NC" "$NC"
-    printf '%s\n\n' '==========================================='
+    printf '\n'
 }
 
 detect_target() {
