@@ -25,6 +25,7 @@ func New() *cobra.Command {
 		},
 	}
 	root.AddCommand(versionCmd)
+	root.AddCommand(newConfigCmd())
 
 	return root
 }
