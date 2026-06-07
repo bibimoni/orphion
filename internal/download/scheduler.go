@@ -21,6 +21,7 @@ const (
 type Job struct {
 	ID      string
 	Episode string
+	Title   string
 	URL     string
 	Status  Status
 	Err     error

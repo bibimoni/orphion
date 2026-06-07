@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/distiled/orphion/internal/app"
 	"github.com/distiled/orphion/internal/cli"
+	"github.com/distiled/orphion/internal/config"
 	"github.com/distiled/orphion/internal/ffmpeg"
 	"github.com/distiled/orphion/internal/provider/catalog"
 )
@@ -20,20 +22,32 @@ func main() {
 	)
 	defer cancel()
 
-	// Build the application service with catalog provider and FFmpeg runner.
+	// Load configuration from the default path, falling back to defaults on
+	// missing file. Missing files are OK; parse errors are fatal.
+	cfgPath := defaultConfigPath()
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "orphion: config:", err)
+		os.Exit(2)
+	}
+
 	provider := catalog.NewProvider(catalog.Config{BaseURL: catalog.DefaultBaseURL})
-	runner, err := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	ffmpegPath := cfg.FFmpegPath
+	if ffmpegPath == "" {
+		ffmpegPath = "ffmpeg"
+	}
+	runner, err := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: ffmpegPath})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orphion:", err)
 		os.Exit(2)
 	}
 
-	cfg := app.Config{
-		OutputDir:    "~/Anime",
-		Concurrency:  1,
-		PreferredQty: "1080p",
+	appCfg := app.Config{
+		OutputDir:    cfg.OutputDir,
+		Concurrency:  cfg.Concurrency,
+		PreferredQty: cfg.PreferredQuality,
 	}
-	service := app.New(provider, runner, cfg)
+	service := app.New(provider, runner, appCfg)
 
 	root := cli.New(service)
 	root.SetContext(ctx)
@@ -50,6 +64,14 @@ func main() {
 		fmt.Fprintln(os.Stderr, "orphion:", err)
 		os.Exit(classifyError(err))
 	}
+}
+
+func defaultConfigPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".config", "orphion", "config.yaml")
 }
 
 func classifyError(err error) int {

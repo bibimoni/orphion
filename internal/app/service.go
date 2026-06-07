@@ -80,7 +80,7 @@ func (s *Service) ResolveID(ctx context.Context, query, kind string) (string, er
 }
 
 // DownloadEpisodes downloads selected episodes for a given title ID.
-func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr string) (DownloadResult, []download.Result, error) {
+func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr, title string) (DownloadResult, []download.Result, error) {
 	eps, err := s.provider.Episodes(ctx, animeID)
 	if err != nil {
 		return DownloadResult{}, nil, fmt.Errorf("get episodes: %w", err)
@@ -135,6 +135,7 @@ func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr string) (D
 		jobs[i] = download.Job{
 			ID:      ep.ID,
 			Episode: ep.Number,
+			Title:   title,
 		}
 	}
 
@@ -188,12 +189,19 @@ func (s *Service) executeJob(ctx context.Context, job download.Job) error {
 		}
 	}
 
-	baseDir := expandTilde(s.config.OutputDir)
-	title := "Download"
-	epNum := job.Episode
+baseDir := expandTilde(s.config.OutputDir)
+	title := job.Title
+	if title == "" {
+		title = "Download"
+	}
 
-	outPath := paths.OutputLayout(baseDir, title, epNum)
-	partPath := paths.PartialPath(baseDir, title, epNum)
+	outPath := paths.OutputLayout(baseDir, title, job.Episode)
+	partPath := paths.PartialPath(baseDir, title, job.Episode)
+
+	// Skip if final file already exists.
+	if _, err := os.Stat(outPath); err == nil {
+		return nil
+	}
 
 	if err := os.MkdirAll(filepath.Dir(partPath), 0o755); err != nil {
 		return fmt.Errorf("create output dir: %w", err)

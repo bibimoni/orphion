@@ -104,7 +104,7 @@ func TestService_DownloadEpisodes(t *testing.T) {
 	svc := newTestService(fp)
 	ctx := context.Background()
 
-	result, raw, err := svc.DownloadEpisodes(ctx, "anime-id", "1-2")
+	result, raw, err := svc.DownloadEpisodes(ctx, "anime-id", "1-2", "Test Title")
 	if err != nil {
 		t.Fatal(err)
 	}

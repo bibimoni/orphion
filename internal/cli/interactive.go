@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -18,11 +17,13 @@ func setInteractiveRoot(root *cobra.Command, service *app.Service) {
 	}
 
 	root.RunE = func(cmd *cobra.Command, args []string) error {
-		return runInteractive(service)
+		return runInteractive(cmd, service)
 	}
 }
 
-func runInteractive(service *app.Service) error {
+func runInteractive(cmd *cobra.Command, service *app.Service) error {
+	ctx := cmd.Context()
+
 	// Welcome
 	pterm.DefaultBasicText.Println("Orphion - Anime & Drama Downloader")
 	pterm.DefaultBasicText.Println("")
@@ -45,10 +46,8 @@ func runInteractive(service *app.Service) error {
 	if err != nil {
 		return fmt.Errorf("type selection: %w", err)
 	}
-	_ = resType
 
 	// Step 3: Search for titles
-	ctx := context.Background()
 	result, err := service.Search(ctx, query, resType)
 	if err != nil {
 		return fmt.Errorf("search: %w", err)
@@ -85,7 +84,7 @@ func runInteractive(service *app.Service) error {
 	pterm.Info.Println(fmt.Sprintf("Downloading episodes: %s", epExpr))
 
 	// Step 6: Download
-	downloadResult, _, err := service.DownloadEpisodes(ctx, animeID, epExpr)
+	downloadResult, _, err := service.DownloadEpisodes(ctx, animeID, epExpr, selectedTitle)
 	if err != nil {
 		return err
 	}

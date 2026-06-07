@@ -127,7 +127,7 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 				}
 			}
 
-			result, _, err := service.DownloadEpisodes(cmd.Context(), id, episodes)
+			result, _, err := service.DownloadEpisodes(cmd.Context(), id, episodes, title)
 			if err != nil {
 				return err
 			}
