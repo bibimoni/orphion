@@ -69,9 +69,9 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// LoadOrCreate loads the config file if it exists. If it doesn't, it creates
-// one with defaults and returns it. This ensures the app works on first run
-// without requiring the user to run "config init" manually.
+// LoadOrCreate loads the config file if it exists. If it doesn't, it returns
+// in-memory defaults without writing to disk. Use "config init" to explicitly
+// create the file.
 func LoadOrCreate(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err == nil {
@@ -82,14 +82,9 @@ func LoadOrCreate(path string) (*Config, error) {
 		return nil, fmt.Errorf("read config %s: %w", path, err)
 	}
 
-	// File doesn't exist — create it with defaults.
+	// File doesn't exist — return defaults in-memory without writing to disk.
 	cfg := &Config{}
 	SetDefaults(cfg)
-
-	if err := writeConfigFile(path, cfg); err != nil {
-		return nil, fmt.Errorf("create default config: %w", err)
-	}
-
 	return cfg, nil
 }
 
