@@ -260,23 +260,29 @@ func TestEpisodesDefaultTitleWhenCanonicalEmpty(t *testing.T) {
 
 func TestStreamsReturnsM3U8WithHeaders(t *testing.T) {
 	client := testClient(t, func(req *http.Request) (*http.Response, error) {
-		if req.URL.Path != "/anime/154587/1/hianime" {
-			t.Fatalf("path = %s", req.URL.Path)
-		}
-		return jsonResponse(http.StatusOK, `{
-			"success": true,
-			"data": {
-				"provider": "hianime",
-				"anime": {"id": 154587, "title": {"english": "Test"}},
-				"episode": {
-					"sources": {
-						"type": "SOFT",
-						"sources": {"file": "https://cdn.example.test/anime/master.m3u8"},
-						"tracks": [{"file": "https://proxy.example.test/sub.vtt", "label": "English", "kind": "captions", "default": true}]
+		switch req.URL.Path {
+		case "/anime/154587/1/hianime":
+			return jsonResponse(http.StatusOK, `{
+				"success": true,
+				"data": {
+					"provider": "hianime",
+					"anime": {"id": 154587, "title": {"english": "Test"}},
+					"episode": {
+						"sources": {
+							"type": "SOFT",
+							"sources": {"file": "https://cdn.example.test/anime/master.m3u8"},
+							"tracks": [{"file": "https://proxy.example.test/sub.vtt", "label": "English", "kind": "captions", "default": true}]
+						}
 					}
 				}
-			}
-		}`), nil
+			}`), nil
+		case "/proxy":
+			// Serve the m3u8 manifest content.
+			return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nhttps://proxy.example.test/proxy?url=https://cdn.example.test/seg1.ts#/seg.ts\n#EXT-X-ENDLIST"), nil
+		default:
+			t.Fatalf("unexpected path = %s", req.URL.Path)
+			return nil, nil
+		}
 	})
 
 	episodeID := encodeEpisodeID(episodeRef{AniListID: "154587", Number: "1", Provider: "hianime"})
@@ -287,12 +293,9 @@ func TestStreamsReturnsM3U8WithHeaders(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("len(Streams()) = %d", len(got))
 	}
-	// CDN URLs should be proxied through proxy.bettermelon.ru.
-	if !strings.HasPrefix(got[0].URL, "https://proxy.example.test/proxy?url=") {
-		t.Fatalf("URL = %q, want proxied URL", got[0].URL)
-	}
-	if !strings.Contains(got[0].URL, "cdn.example.test") {
-		t.Fatalf("proxied URL missing original host: %q", got[0].URL)
+	// Stream URL should be a local file (from rewriteManifest).
+	if !strings.HasPrefix(got[0].URL, "file://") {
+		t.Fatalf("URL = %q, want local file:// URL", got[0].URL)
 	}
 	if got[0].Headers.Get("Referer") == "" {
 		t.Fatal("missing Referer header")
@@ -306,15 +309,12 @@ func TestStreamsTriesFallbackProviders(t *testing.T) {
 	requests := 0
 	client := testClient(t, func(req *http.Request) (*http.Response, error) {
 		requests++
-		switch requests {
-		case 1:
+		switch {
+		case requests == 1 && req.URL.Path == "/anime/154587/1/hianime":
 			// Primary provider (hianime) returns error.
 			return jsonResponse(http.StatusBadGateway, "error"), nil
-		case 2:
+		case requests == 2 && req.URL.Path == "/anime/154587/1/animekai":
 			// Fallback to animekai returns success.
-			if req.URL.Path != "/anime/154587/1/animekai" {
-				t.Fatalf("fallback path = %s", req.URL.Path)
-			}
 			return jsonResponse(http.StatusOK, `{
 				"success": true,
 				"data": {
@@ -325,8 +325,11 @@ func TestStreamsTriesFallbackProviders(t *testing.T) {
 					}
 				}
 			}`), nil
+		case req.URL.Path == "/proxy":
+			// Serve m3u8 manifest content.
+			return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nhttps://proxy.example.test/proxy?url=https://cdn.example.test/seg1.ts#/seg.ts\n#EXT-X-ENDLIST"), nil
 		default:
-			t.Fatalf("unexpected request %d", requests)
+			t.Fatalf("unexpected request %d to %s", requests, req.URL.Path)
 			return nil, nil
 		}
 	})
@@ -336,11 +339,8 @@ func TestStreamsTriesFallbackProviders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || !strings.Contains(got[0].URL, "cdn.example.test") {
+	if len(got) != 1 || !strings.HasPrefix(got[0].URL, "file://") {
 		t.Fatalf("Streams() = %#v", got)
-	}
-	if !strings.HasPrefix(got[0].URL, "https://proxy.example.test/proxy?url=") {
-		t.Fatalf("fallback URL not proxied: %q", got[0].URL)
 	}
 }
 
@@ -506,19 +506,27 @@ func TestSearchWithNoEnglishTitleFallsBackToAniListLabel(t *testing.T) {
 
 func TestStreamsCDNURLIsProxied(t *testing.T) {
 	client := testClient(t, func(req *http.Request) (*http.Response, error) {
-		return jsonResponse(http.StatusOK, `{
-			"success": true,
-			"data": {
-				"provider": "hianime",
-				"anime": {"id": 1, "title": {"english": "Test"}},
-				"episode": {
-					"sources": {
-						"type": "SOFT",
-						"sources": {"file": "https://cdn.mewstream.buzz/anime/abc123/master.m3u8"}
+		switch req.URL.Path {
+		case "/anime/1/1/hianime":
+			return jsonResponse(http.StatusOK, `{
+				"success": true,
+				"data": {
+					"provider": "hianime",
+					"anime": {"id": 1, "title": {"english": "Test"}},
+					"episode": {
+						"sources": {
+							"type": "SOFT",
+							"sources": {"file": "https://cdn.mewstream.buzz/anime/abc123/master.m3u8"}
+						}
 					}
 				}
-			}
-		}`), nil
+			}`), nil
+		case "/proxy":
+			return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\n/proxy?url=https://cdn.mewstream.buzz/seg1.ts\n#EXT-X-ENDLIST"), nil
+		default:
+			t.Fatalf("unexpected path = %s", req.URL.Path)
+			return nil, nil
+		}
 	})
 
 	episodeID := encodeEpisodeID(episodeRef{AniListID: "1", Number: "1", Provider: "hianime"})
@@ -529,35 +537,35 @@ func TestStreamsCDNURLIsProxied(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("len = %d", len(got))
 	}
-	// Should be proxied, not the raw CDN URL.
-	if !strings.HasPrefix(got[0].URL, "https://proxy.example.test/proxy?url=") {
-		t.Fatalf("URL not proxied: %q", got[0].URL)
-	}
-	// The original CDN URL should be encoded in the proxy query param.
-	if !strings.Contains(got[0].URL, "cdn.mewstream.buzz") {
-		t.Fatalf("proxy URL missing original host: %q", got[0].URL)
-	}
-	// The raw CDN URL should NOT appear as a plain URL.
-	if strings.HasPrefix(got[0].URL, "https://cdn.mewstream.buzz") {
-		t.Fatalf("raw CDN URL not proxied: %q", got[0].URL)
+	// Should be a local file:// URL (manifest was downloaded and rewritten).
+	if !strings.HasPrefix(got[0].URL, "file://") {
+		t.Fatalf("URL not local file: %q", got[0].URL)
 	}
 }
 
 func TestStreamsAlreadyProxiedURLIsNotDoubleProxied(t *testing.T) {
 	client := testClient(t, func(req *http.Request) (*http.Response, error) {
-		return jsonResponse(http.StatusOK, `{
-			"success": true,
-			"data": {
-				"provider": "hianime",
-				"anime": {"id": 1, "title": {"english": "Test"}},
-				"episode": {
-					"sources": {
-						"type": "SOFT",
-						"sources": {"file": "https://proxy.example.test/proxy?url=https%3A%2F%2Fcdn.example.test%2Fmaster.m3u8"}
+		switch req.URL.Path {
+		case "/anime/1/1/hianime":
+			return jsonResponse(http.StatusOK, `{
+				"success": true,
+				"data": {
+					"provider": "hianime",
+					"anime": {"id": 1, "title": {"english": "Test"}},
+					"episode": {
+						"sources": {
+							"type": "SOFT",
+							"sources": {"file": "https://proxy.example.test/proxy?url=https%3A%2F%2Fcdn.example.test%2Fmaster.m3u8"}
+						}
 					}
 				}
-			}
-		}`), nil
+			}`), nil
+		case "/proxy":
+			return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nhttps://proxy.example.test/proxy?url=https://cdn.example.test/seg1.ts\n#EXT-X-ENDLIST"), nil
+		default:
+			t.Fatalf("unexpected path = %s", req.URL.Path)
+			return nil, nil
+		}
 	})
 
 	episodeID := encodeEpisodeID(episodeRef{AniListID: "1", Number: "1", Provider: "hianime"})
@@ -565,8 +573,6 @@ func TestStreamsAlreadyProxiedURLIsNotDoubleProxied(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Already-proxied URL should be wrapped again (the proxy layer is idempotent
-	// from the server's perspective), but we verify it doesn't crash.
 	if len(got) != 1 {
 		t.Fatalf("len = %d", len(got))
 	}

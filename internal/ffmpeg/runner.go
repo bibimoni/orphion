@@ -45,38 +45,75 @@ func NewRunner(cfg Config) (*Runner, error) {
 
 // Args builds the FFmpeg argument list for a download.
 func (r *Runner) Args(url, output, referer, userAgent string) []string {
-	headers := fmt.Sprintf("Referer: %s\r\nUser-Agent: %s\r\n", referer, userAgent)
-	return []string{
+	args := []string{
 		"-nostdin",
 		"-hide_banner",
 		"-loglevel", "warning",
-		"-headers", headers,
+	}
+	if !strings.HasPrefix(url, "file://") {
+		headers := fmt.Sprintf("Referer: %s\r\nUser-Agent: %s\r\n", referer, userAgent)
+		args = append(args, "-headers", headers)
+	}
+	args = appendHLSFlags(args, url)
+	args = append(args,
 		"-i", url,
 		"-map", "0:v",
 		"-map", "0:a",
 		"-c", "copy",
 		output,
-	}
+	)
+	return args
 }
 
 // ProgressArgs builds the FFmpeg argument list for a download with progress
 // reporting. It adds -progress pipe:2 and -stats_period to enable structured
 // progress output on stderr.
 func (r *Runner) ProgressArgs(url, output, referer, userAgent string) []string {
-	headers := fmt.Sprintf("Referer: %s\r\nUser-Agent: %s\r\n", referer, userAgent)
-	return []string{
+	args := []string{
 		"-nostdin",
 		"-hide_banner",
 		"-loglevel", "warning",
 		"-progress", "pipe:2",
 		"-stats_period", "1",
-		"-headers", headers,
+	}
+	if !strings.HasPrefix(url, "file://") {
+		headers := fmt.Sprintf("Referer: %s\r\nUser-Agent: %s\r\n", referer, userAgent)
+		args = append(args, "-headers", headers)
+	}
+	args = appendHLSFlags(args, url)
+	args = append(args,
 		"-i", url,
 		"-map", "0:v",
 		"-map", "0:a",
 		"-c", "copy",
 		output,
+	)
+	return args
+}
+
+// appendHLSFlags adds flags needed for HLS streams with obfuscated or
+// non-standard segment extensions (e.g. .jpg, .html used by CDNs to
+// disguise video segments). For local m3u8 files referencing remote
+// segments, protocol_whitelist is added to allow file+https access.
+func appendHLSFlags(args []string, url string) []string {
+	if !isHLS(url) {
+		return args
 	}
+	args = append(args,
+		"-allowed_extensions", "ALL",
+		"-allowed_segment_extensions", "ALL",
+		"-extension_picky", "0",
+	)
+	if strings.HasPrefix(url, "file://") {
+		args = append(args, "-protocol_whitelist", "file,https,http,crypto,data,tcp,tls")
+	}
+	return args
+}
+
+// isHLS returns true if the URL looks like an HLS manifest.
+func isHLS(url string) bool {
+	lower := strings.ToLower(url)
+	return strings.Contains(lower, ".m3u8") || strings.Contains(lower, "/proxy?url=")
 }
 
 // Execute runs the FFmpeg binary.
