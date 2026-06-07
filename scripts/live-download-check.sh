@@ -80,8 +80,13 @@ append_summary "- Episode: \`${EPISODE}\`"
 append_summary "- Probe duration: \`${PROBE_SECONDS}s\`"
 append_summary
 
+SEARCH_HOME="$WORK_DIR/search-home"
+SEARCH_OUTPUT="$WORK_DIR/search-output"
+mkdir -p "$SEARCH_OUTPUT"
+write_config "$SEARCH_HOME" "$SEARCH_OUTPUT" "$FFMPEG_BIN"
+
 STAGE="title search"
-search_output="$("$ORPHION_BIN" search --type anime "$TITLE")"
+search_output="$(HOME="$SEARCH_HOME" "$ORPHION_BIN" search --type anime "$TITLE")"
 title_ids="$(
     printf '%s\n' "$search_output" |
         awk -F '\t' -v title="$TITLE" '$2 == title { gsub(/^[ \t]+|[ \t]+$/, "", $1); print $1 }'
