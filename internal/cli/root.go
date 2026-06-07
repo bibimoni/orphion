@@ -1,3 +1,4 @@
+// Package cli implements the command-line interface for Orphion.
 package cli
 
 import (
@@ -163,19 +164,41 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 				return fmt.Errorf("--episodes is required")
 			}
 
-			// Apply overrides to the actual service config.
+			// Apply CLI flag overrides to the session config.
+			sessCfg := &sessionConfig{
+				OutputDir:   service.Config().OutputDir,
+				Quality:     service.Config().PreferredQty,
+				Concurrency: service.Config().Concurrency,
+				Force:       false,
+			}
 			if outputDir != "" {
-				service.SetOutputDir(outputDir)
+				sessCfg.OutputDir = outputDir
 			}
 			if quality != "" {
-				service.SetPreferredQuality(quality)
+				sessCfg.Quality = quality
 			}
 			if concurrency > 0 {
-				service.SetConcurrency(concurrency)
+				sessCfg.Concurrency = concurrency
 			}
 			if force {
-				service.SetForce(true)
+				sessCfg.Force = true
 			}
+
+			// In interactive terminals, show config and offer to edit.
+			// Non-interactive (piped) skips the prompt.
+			if isTerminal(os.Stdout) && !allFlagsSet(cmd, []string{"output", "quality", "concurrency", "force"}) {
+				edited, err := showConfigAndEdit(&config.Config{
+					OutputDir:        sessCfg.OutputDir,
+					PreferredQuality: sessCfg.Quality,
+					Concurrency:      sessCfg.Concurrency,
+				})
+				if err != nil {
+					return fmt.Errorf("session config: %w", err)
+				}
+				sessCfg = edited
+			}
+
+			applySessionConfig(service, sessCfg)
 
 			// Resolve title to ID if needed.
 			if animeID == "" {
@@ -189,21 +212,25 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 				spinner.Success(fmt.Sprintf("Resolved to %s", pterm.Cyan(animeID)))
 			}
 
-			// Set up animated progress display.
-			dlSpinner, _ := pterm.DefaultSpinner.Start("Getting episodes...")
-			service.SetProgressCallback(newProgressCallback(dlSpinner))
+			// Set up multi-line progress display for concurrent downloads.
+			tracker := newDownloadTracker()
+			service.SetProgressCallback(func(episode string, progress ffmpeg.Progress) {
+				tracker.update(episode, progress)
+			})
+			service.SetCompletedCallback(func(episode string) {
+				tracker.markDone(episode)
+			})
 
 			result, _, err := service.DownloadEpisodes(cmd.Context(), animeID, episodes, title)
+			tracker.stop()
 			if err != nil {
-				dlSpinner.Fail(fmt.Sprintf("Failed: %s", err))
 				return err
 			}
 
 			// Show per-episode failures.
 			if result.Failed > 0 {
-				dlSpinner.Fail(fmt.Sprintf("%d completed, %d failed", result.Completed, result.Failed))
 				for ep, epErr := range result.Errors {
-					pterm.Error.Printfln("  Episode %s: %s", ep, epErr)
+					pterm.Error.Printfln("Episode %s: %s", ep, epErr)
 				}
 				return &ExitError{code: 1, msg: "some downloads failed"}
 			}
@@ -211,9 +238,9 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 			// Show output directory for completed downloads.
 			if len(result.Outputs) > 0 {
 				dir := outputDirFor(result.Outputs[0])
-				dlSpinner.Success(fmt.Sprintf("Saved to %s", pterm.LightBlue(dir)))
+				pterm.Success.Printfln("Saved to %s", pterm.LightBlue(dir))
 			} else {
-				dlSpinner.Success(fmt.Sprintf("%d episode(s) downloaded", result.Completed))
+				pterm.Success.Printfln("%d episode(s) downloaded", result.Completed)
 			}
 			return nil
 		},
@@ -231,25 +258,24 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 	return cmd
 }
 
-// newProgressCallback returns a ProgressCallback that updates a pterm spinner
-// with live download stats. The spinner animates continuously while
-// UpdateText refreshes the displayed speed/size on each FFmpeg progress event.
-func newProgressCallback(spinner *pterm.SpinnerPrinter) app.ProgressCallback {
-	return func(episode string, progress ffmpeg.Progress) {
-		if progress.Speed == "" && progress.Bytes == 0 {
-			// Initial callback — download is starting, no data yet.
-			spinner.UpdateText(fmt.Sprintf("%s Episode %s  connecting...",
-				pterm.Cyan("↓"), episode))
-			return
-		}
-		speed := progress.Speed
-		if speed == "" {
-			speed = "..."
-		}
-		size := formatBytes(progress.Bytes)
-		spinner.UpdateText(fmt.Sprintf("%s Episode %s  %s/s  %s",
-			pterm.Cyan("↓"), episode, pterm.Yellow(speed), size))
+func formatProgressLine(episode string, progress ffmpeg.Progress) string {
+	if progress.Speed == "" && progress.Bytes == 0 && progress.TotalBytes == 0 {
+		return fmt.Sprintf("%s Episode %s  connecting...",
+			pterm.Cyan("↓"), episode)
 	}
+
+	speed := progress.Speed
+	if speed == "" {
+		speed = "..."
+	}
+
+	size := formatBytes(progress.Bytes)
+	if progress.TotalBytes > 0 {
+		size = fmt.Sprintf("%s / %s", size, formatBytes(progress.TotalBytes))
+	}
+
+	return fmt.Sprintf("%s Episode %s  %s/s  %s",
+		pterm.Cyan("↓"), episode, pterm.Yellow(speed), size)
 }
 
 // formatBytes returns a human-readable byte string.
@@ -286,4 +312,16 @@ func outputDirFor(filePath string) string {
 		return filePath[:idx]
 	}
 	return filePath
+}
+
+// allFlagsSet reports whether all of the named flags were explicitly set
+// on the command line. Used to skip the interactive config prompt when
+// the user has provided all overrides via flags.
+func allFlagsSet(cmd *cobra.Command, names []string) bool {
+	for _, name := range names {
+		if !cmd.Flags().Changed(name) {
+			return false
+		}
+	}
+	return true
 }

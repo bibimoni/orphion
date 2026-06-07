@@ -1,3 +1,4 @@
+// Package provider defines the catalog provider interface.
 package provider
 
 import (
@@ -16,6 +17,8 @@ type Episode struct {
 	ID      string
 	Number  string
 	SortKey float64
+	Title   string
+	Size    string
 }
 
 // Stream represents a downloadable quality variant.

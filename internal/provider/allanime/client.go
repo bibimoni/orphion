@@ -124,7 +124,7 @@ func (c *Client) Search(ctx context.Context, query, kind string) ([]provider.Ani
 		"limit":           40,
 		"page":            1,
 		"translationType": "sub",
-		"countryOrigin":   "ALL",
+		"countryOrigin":   countryOrigin(kind),
 	}
 	if err := c.graphQL(ctx, searchQuery, variables, &response); err != nil {
 		return nil, fmt.Errorf("allanime search: %w", err)
@@ -170,6 +170,7 @@ func (c *Client) Episodes(ctx context.Context, showID string) ([]provider.Episod
 			}),
 			Number:  number,
 			SortKey: sortKey,
+			Title:   "Episode " + number,
 		})
 	}
 	sort.SliceStable(episodes, func(i, j int) bool {
@@ -494,4 +495,16 @@ func decryptResponse(body []byte) ([]byte, error) {
 	stream := cipher.NewCTR(block, iv)
 	stream.XORKeyStream(plaintext, ciphertext)
 	return plaintext, nil
+}
+
+// countryOrigin maps the content kind to an AllAnime country origin filter.
+func countryOrigin(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "anime":
+		return "JP"
+	case "drama":
+		return "JP"
+	default:
+		return "ALL"
+	}
 }

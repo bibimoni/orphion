@@ -1,3 +1,4 @@
+// Package download provides a concurrent download scheduler.
 package download
 
 import (
@@ -68,17 +69,17 @@ func NewScheduler(concurrency int) *Scheduler {
 // it stops scheduling new jobs but waits for started jobs to complete.
 func (s *Scheduler) RunAll(ctx context.Context, jobs []Job, runner Runner) []Result {
 	var (
-		mu        sync.Mutex
-		wg        sync.WaitGroup
-		sem       = make(chan struct{}, s.concurrency)
-		cancelled bool
+		mu       sync.Mutex
+		wg       sync.WaitGroup
+		sem      = make(chan struct{}, s.concurrency)
+		canceled bool
 	)
 
 	results := make([]Result, len(jobs))
 
 	for i := range jobs {
 		mu.Lock()
-		if cancelled {
+		if canceled {
 			mu.Unlock()
 			results[i] = Result{JobID: jobs[i].ID, Status: StatusCancelled}
 			continue
@@ -90,7 +91,7 @@ func (s *Scheduler) RunAll(ctx context.Context, jobs []Job, runner Runner) []Res
 		case sem <- struct{}{}:
 		case <-ctx.Done():
 			mu.Lock()
-			cancelled = true
+			canceled = true
 			mu.Unlock()
 			results[i] = Result{JobID: jobs[i].ID, Status: StatusCancelled}
 			continue

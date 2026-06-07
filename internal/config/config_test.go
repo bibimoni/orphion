@@ -19,8 +19,8 @@ func TestSetDefaults(t *testing.T) {
 	if cfg.Concurrency != 1 {
 		t.Errorf("default concurrency = %d, want 1", cfg.Concurrency)
 	}
-	if cfg.Provider != "catalog" {
-		t.Errorf("default provider = %q, want %q", cfg.Provider, "catalog")
+	if cfg.Provider != "allanime" {
+		t.Errorf("default provider = %q, want %q", cfg.Provider, "allanime")
 	}
 	if cfg.FFmpegPath != "ffmpeg" {
 		t.Errorf("default ffmpeg_path = %q, want %q", cfg.FFmpegPath, "ffmpeg")
@@ -69,7 +69,7 @@ func TestLoadConfigMissingFile(t *testing.T) {
 	}
 }
 
-func TestLoadOrCreateAutoCreates(t *testing.T) {
+func TestLoadOrCreateReturnsDefaultsWhenMissing(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "config.yaml")
 
@@ -80,9 +80,9 @@ func TestLoadOrCreateAutoCreates(t *testing.T) {
 	if cfg.OutputDir != "~/Anime" {
 		t.Errorf("OutputDir = %q, want ~/Anime", cfg.OutputDir)
 	}
-	// File should now exist on disk.
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("config file not created: %v", err)
+	// File should NOT be created on disk — only "config init" writes it.
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("config file should not be auto-created, but it exists")
 	}
 }
 
@@ -184,8 +184,8 @@ func TestLoadConfigAppliesDefaultsForOmittedFields(t *testing.T) {
 	if cfg.Concurrency != 1 {
 		t.Errorf("Concurrency = %d, want 1", cfg.Concurrency)
 	}
-	if cfg.Provider != "catalog" {
-		t.Errorf("Provider = %q, want %q", cfg.Provider, "catalog")
+	if cfg.Provider != "allanime" {
+		t.Errorf("Provider = %q, want %q", cfg.Provider, "allanime")
 	}
 	if cfg.FFmpegPath != "ffmpeg" {
 		t.Errorf("FFmpegPath = %q, want %q", cfg.FFmpegPath, "ffmpeg")

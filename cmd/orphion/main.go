@@ -13,6 +13,7 @@ import (
 	"github.com/distiled/orphion/internal/cli"
 	"github.com/distiled/orphion/internal/config"
 	"github.com/distiled/orphion/internal/ffmpeg"
+	"github.com/distiled/orphion/internal/provider"
 	"github.com/distiled/orphion/internal/provider/allanime"
 )
 
@@ -33,10 +34,17 @@ func main() {
 		os.Exit(2)
 	}
 
-	contentProvider, err := allanime.NewProvider(allanime.DefaultConfig())
+	providers, err := newProviders()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orphion: provider:", err)
 		os.Exit(2)
+	}
+	providerName := normalizeProviderName(cfg.Provider)
+	contentProvider, ok := providers[providerName]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "orphion: provider: unknown provider %q, falling back to allanime\n", cfg.Provider)
+		providerName = "allanime"
+		contentProvider = providers[providerName]
 	}
 
 	runner, err := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: cfg.FFmpegPath})
@@ -49,6 +57,8 @@ func main() {
 		OutputDir:    cfg.OutputDir,
 		Concurrency:  cfg.Concurrency,
 		PreferredQty: cfg.PreferredQuality,
+		ProviderName: providerName,
+		Providers:    providers,
 	}
 	service := app.New(contentProvider, runner, appCfg)
 
@@ -58,6 +68,32 @@ func main() {
 	if err := root.Execute(); err != nil {
 		handleError(ctx, err)
 	}
+}
+
+func newProvider(name string) (provider.Provider, error) {
+	switch name {
+	case "allanime", "catalog":
+		return allanime.NewProvider(allanime.DefaultConfig())
+	default:
+		return nil, fmt.Errorf("unknown provider %q (available: allanime)", name)
+	}
+}
+
+func newProviders() (map[string]provider.Provider, error) {
+	allanimeProvider, err := newProvider("allanime")
+	if err != nil {
+		return nil, err
+	}
+	return map[string]provider.Provider{
+		"allanime": allanimeProvider,
+	}, nil
+}
+
+func normalizeProviderName(name string) string {
+	if name == "catalog" {
+		return "allanime"
+	}
+	return name
 }
 
 func handleError(ctx context.Context, err error) {

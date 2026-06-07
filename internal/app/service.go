@@ -1,3 +1,4 @@
+// Package app implements the core application services for Orphion.
 package app
 
 import (
@@ -22,27 +23,44 @@ type Config struct {
 	Concurrency  int
 	PreferredQty string
 	Force        bool
+	ProviderName string
+	Providers    map[string]provider.Provider
 }
 
 // ProgressCallback receives progress updates during a download.
 type ProgressCallback func(episode string, progress ffmpeg.Progress)
 
+// CompletedCallback is called when an episode download finishes successfully.
+type CompletedCallback func(episode string)
+
 // Service orchestrates content lookup and download.
 type Service struct {
-	provider   provider.Provider
-	scheduler  *download.Scheduler
-	runner     *ffmpeg.Runner
-	config     Config
-	progressCb ProgressCallback
+	provider     provider.Provider
+	scheduler    *download.Scheduler
+	runner       *ffmpeg.Runner
+	config       Config
+	progressCb   ProgressCallback
+	completedCb  CompletedCallback
+	providerName string
+	providers    map[string]provider.Provider
 }
 
 // New creates a new app service.
 func New(p provider.Provider, runner *ffmpeg.Runner, cfg Config) *Service {
+	providers := make(map[string]provider.Provider, len(cfg.Providers))
+	for name, provider := range cfg.Providers {
+		providers[name] = provider
+	}
+	if cfg.ProviderName != "" && p != nil {
+		providers[cfg.ProviderName] = p
+	}
 	return &Service{
-		provider:  p,
-		scheduler: download.NewScheduler(cfg.Concurrency),
-		runner:    runner,
-		config:    cfg,
+		provider:     p,
+		scheduler:    download.NewScheduler(cfg.Concurrency),
+		runner:       runner,
+		config:       cfg,
+		providerName: cfg.ProviderName,
+		providers:    providers,
 	}
 }
 
@@ -56,7 +74,7 @@ type DownloadResult struct {
 	Completed int
 	Failed    int
 	Skipped   int
-	Cancelled int
+	Canceled  int
 	Missing   []string
 	Outputs   []string         // Output file paths for completed downloads
 	Errors    map[string]error // Episode number → error for failed downloads
@@ -91,6 +109,52 @@ func (s *Service) SetProgressCallback(fn ProgressCallback) {
 	s.progressCb = fn
 }
 
+// SetCompletedCallback sets the callback invoked when an episode download succeeds.
+func (s *Service) SetCompletedCallback(fn CompletedCallback) {
+	s.completedCb = fn
+}
+
+// SetProvider switches the active content provider by registered name.
+func (s *Service) SetProvider(name string) error {
+	p, ok := s.providers[name]
+	if !ok {
+		return fmt.Errorf("provider %q not found", name)
+	}
+	s.provider = p
+	s.providerName = name
+	return nil
+}
+
+// ProviderName returns the active provider name, if known.
+func (s *Service) ProviderName() string {
+	return s.providerName
+}
+
+// ProviderNames returns the registered provider names in stable UI order.
+func (s *Service) ProviderNames() []string {
+	names := make([]string, 0, len(s.providers))
+	if s.providerName != "" {
+		if _, ok := s.providers[s.providerName]; ok {
+			names = append(names, s.providerName)
+		}
+	}
+	for _, name := range []string{"allanime", "catalog"} {
+		if name == s.providerName {
+			continue
+		}
+		if _, ok := s.providers[name]; ok {
+			names = append(names, name)
+		}
+	}
+	for name := range s.providers {
+		if name == s.providerName || name == "allanime" || name == "catalog" {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
 // DownloadEpisodes downloads selected episodes for a given title ID.
 func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr, title string) (DownloadResult, []download.Result, error) {
 	eps, err := s.provider.Episodes(ctx, animeID)
@@ -117,6 +181,14 @@ func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr, title str
 	if len(selected) == 0 {
 		return DownloadResult{}, nil, fmt.Errorf("no episodes matching %q", expr)
 	}
+	selectedProviderEpisodes := make([]provider.Episode, len(selected))
+	for i, ep := range selected {
+		selectedProviderEpisodes[i] = provider.Episode{
+			ID:      ep.ID,
+			Number:  ep.Number,
+			SortKey: ep.SortKey,
+		}
+	}
 
 	// Detect missing requested episode numbers.
 	reqNums := make(map[string]bool)
@@ -142,6 +214,18 @@ func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr, title str
 		fmt.Fprintf(os.Stderr, "warning: missing episodes: %v\n", missing)
 	}
 
+	return s.downloadEpisodeList(ctx, selectedProviderEpisodes, title, missing)
+}
+
+// DownloadSelectedEpisodes downloads provider episodes selected directly by ID.
+func (s *Service) DownloadSelectedEpisodes(ctx context.Context, selected []provider.Episode, title string) (DownloadResult, []download.Result, error) {
+	if len(selected) == 0 {
+		return DownloadResult{}, nil, fmt.Errorf("no episodes selected")
+	}
+	return s.downloadEpisodeList(ctx, selected, title, nil)
+}
+
+func (s *Service) downloadEpisodeList(ctx context.Context, selected []provider.Episode, title string, missing []string) (DownloadResult, []download.Result, error) {
 	jobs := make([]download.Job, len(selected))
 	for i, ep := range selected {
 		jobs[i] = download.Job{
@@ -193,7 +277,7 @@ func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr, title str
 				dr.Errors[epNum] = r.Err
 			}
 		case download.StatusCancelled:
-			dr.Cancelled++
+			dr.Canceled++
 		}
 	}
 	dr.Missing = missing
@@ -278,6 +362,11 @@ func (s *Service) executeJob(ctx context.Context, job download.Job) (string, err
 		return "", fmt.Errorf("rename: %w", err)
 	}
 
+	// Notify the UI that this episode is done.
+	if s.completedCb != nil {
+		s.completedCb(job.Episode)
+	}
+
 	return outPath, nil
 }
 
@@ -325,7 +414,7 @@ func (s *Service) OutputDir() string {
 
 func parseSortKey(s string) float64 {
 	var val float64
-	fmt.Sscanf(s, "%f", &val)
+	_, _ = fmt.Sscanf(s, "%f", &val)
 	return val
 }
 

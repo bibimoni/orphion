@@ -1,3 +1,4 @@
+// Package ffmpeg wraps FFmpeg process execution with progress tracking.
 package ffmpeg
 
 import (
@@ -19,10 +20,11 @@ type Config struct {
 
 // Progress holds a snapshot of FFmpeg download progress.
 type Progress struct {
-	Bytes   int64  // total_size from FFmpeg
-	Speed   string // speed from FFmpeg (e.g. "1.5x")
-	TimeMs  int64  // out_time_ms from FFmpeg
-	Bitrate string // bitrate from FFmpeg (e.g. "3400.0kbits/s")
+	Bytes      int64  // downloaded bytes
+	TotalBytes int64  // total size when known
+	Speed      string // download speed (e.g. "1.5x" or "2.5 MiB/s")
+	TimeMs     int64  // out_time_ms from FFmpeg
+	Bitrate    string // bitrate from FFmpeg (e.g. "3400.0kbits/s")
 }
 
 // ProgressFunc receives progress updates during an FFmpeg download.
@@ -50,7 +52,8 @@ func (r *Runner) Args(url, output, referer, userAgent string) []string {
 		"-loglevel", "warning",
 		"-headers", headers,
 		"-i", url,
-		"-map", "0",
+		"-map", "0:v",
+		"-map", "0:a",
 		"-c", "copy",
 		output,
 	}
@@ -69,7 +72,8 @@ func (r *Runner) ProgressArgs(url, output, referer, userAgent string) []string {
 		"-stats_period", "1",
 		"-headers", headers,
 		"-i", url,
-		"-map", "0",
+		"-map", "0:v",
+		"-map", "0:a",
 		"-c", "copy",
 		output,
 	}
@@ -121,7 +125,7 @@ func (r *Runner) RenamePart(part, final string) error {
 
 // CleanupPartial removes partial files.
 func (r *Runner) CleanupPartial(path string) {
-	os.Remove(path)
+	_ = os.Remove(path)
 }
 
 // parseProgressOutput reads FFmpeg's -progress key=value output.
