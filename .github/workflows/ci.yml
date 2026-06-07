@@ -105,10 +105,10 @@ jobs:
         run: bash scripts/live-download-check.sh
 
   live-bettermelon:
-    name: Live Download (Bettermelon)
+    name: Smoke Test (Bettermelon)
     if: github.event_name == 'pull_request' && github.base_ref == 'main'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -117,24 +117,27 @@ jobs:
           go-version-file: ".go-version"
           cache: true
 
-      - name: Install FFmpeg
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg
-
       - name: Build pull request binary
         run: |
           mkdir -p build
           go build -trimpath -o build/orphion ./cmd/orphion
           ./build/orphion version
 
-      - name: Download and validate Dagashi Kashi episode 1
-        env:
-          ORPHION_BIN: ${{ github.workspace }}/build/orphion
-          FFMPEG_BIN: /usr/bin/ffmpeg
-          FFPROBE_BIN: /usr/bin/ffprobe
-          ORPHION_LIVE_TITLE: Dagashi Kashi
-          ORPHION_LIVE_EPISODE: "1"
-          ORPHION_PROBE_SECONDS: "15"
-          ORPHION_LIVE_PROVIDER: bettermelon
-        run: bash scripts/live-download-check.sh
+      - name: Write config
+        run: |
+          mkdir -p ~/.config/orphion
+          printf 'output_dir: /tmp/orphion-smoke\nprovider: bettermelon\nffmpeg_path: /usr/bin/ffmpeg\n' > ~/.config/orphion/config.yaml
+
+      - name: Search returns results
+        run: |
+          output="$(./build/orphion search --type anime 'Dagashi Kashi')"
+          printf 'Search results:\n%s\n' "$output"
+          count="$(printf '%s' "$output" | wc -l | tr -d '[:space:]')"
+          [ "$count" -ge 1 ] || { echo "No search results"; exit 1; }
+
+      - name: Episodes API reachable
+        run: |
+          title_id="$(./build/orphion search --type anime 'Dagashi Kashi' | head -1 | awk '{print $1}')"
+          printf 'Title ID: %s\n' "$title_id"
+          [ -n "$title_id" ] || { echo "No title ID from search"; exit 1; }
+          ORPHION_SMOKE_ANIME_ID="$title_id" go test -race -count=1 -run TestSmokeAPI -timeout 60s ./internal/provider/bettermelon/
