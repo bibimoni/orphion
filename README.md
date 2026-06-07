@@ -71,13 +71,13 @@ ffmpeg -version
 #### Quick Install (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/distiled/orphion/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/bibimoni/orphion/main/install.sh | bash
 ```
 
 Or clone and build manually:
 
 ```bash
-git clone https://github.com/distiled/orphion.git
+git clone https://github.com/bibimoni/orphion.git
 cd orphion
 go build -trimpath -ldflags="-s -w" -o dist/orphion ./cmd/orphion
 sudo cp dist/orphion /usr/local/bin/
@@ -230,7 +230,7 @@ Contributions are welcome. Before submitting a PR, please review:
 ### Dev Setup
 
 ```bash
-git clone https://github.com/distiled/orphion.git
+git clone https://github.com/bibimoni/orphion.git
 cd orphion
 go mod download
 go test -race ./...
@@ -260,20 +260,20 @@ Distributed under the MIT License. See [`LICENSE`](LICENSE) for details.
 <!-- CONTACT -->
 ## Contact
 
-Project Link: [https://github.com/distiled/orphion](https://github.com/distiled/orphion)
+Project Link: [https://github.com/bibimoni/orphion](https://github.com/bibimoni/orphion)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 <!-- MARKDOWN LINKS & IMAGES -->
-[contributors-shield]: https://img.shields.io/github/contributors/distiled/orphion.svg?style=flat-square
-[contributors-url]: https://github.com/distiled/orphion/graphs/contributors
-[forks-shield]: https://img.shields.io/github/forks/distiled/orphion.svg?style=flat-square
-[forks-url]: https://github.com/distiled/orphion/network/members
-[stars-shield]: https://img.shields.io/github/stars/distiled/orphion.svg?style=flat-square
-[stars-url]: https://github.com/distiled/orphion/stargazers
-[issues-shield]: https://img.shields.io/github/issues/distiled/orphion.svg?style=flat-square
-[issues-url]: https://github.com/distiled/orphion/issues
-[license-shield]: https://img.shields.io/github/license/distiled/orphion.svg?style=flat-square
-[license-url]: https://github.com/distiled/orphion/blob/main/LICENSE
-[go-shield]: https://img.shields.io/github/go-mod/go-version/distiled/orphion?style=flat-square
-[go-url]: https://github.com/distiled/orphion
+[contributors-shield]: https://img.shields.io/github/contributors/bibimoni/orphion.svg?style=flat-square
+[contributors-url]: https://github.com/bibimoni/orphion/graphs/contributors
+[forks-shield]: https://img.shields.io/github/forks/bibimoni/orphion.svg?style=flat-square
+[forks-url]: https://github.com/bibimoni/orphion/network/members
+[stars-shield]: https://img.shields.io/github/stars/bibimoni/orphion.svg?style=flat-square
+[stars-url]: https://github.com/bibimoni/orphion/stargazers
+[issues-shield]: https://img.shields.io/github/issues/bibimoni/orphion.svg?style=flat-square
+[issues-url]: https://github.com/bibimoni/orphion/issues
+[license-shield]: https://img.shields.io/github/license/bibimoni/orphion.svg?style=flat-square
+[license-url]: https://github.com/bibimoni/orphion/blob/main/LICENSE
+[go-shield]: https://img.shields.io/github/go-mod/go-version/bibimoni/orphion?style=flat-square
+[go-url]: https://github.com/bibimoni/orphion

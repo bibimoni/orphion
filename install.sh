@@ -6,7 +6,7 @@
 # selected episodes as MKV files through system FFmpeg.
 #
 # Quick one-liner:
-#   curl -fsSL https://raw.githubusercontent.com/distiled/orphion/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/bibimoni/orphion/main/install.sh | bash
 #
 # What this script does:
 #   1. Detects your OS (macOS, Linux, WSL)
@@ -17,7 +17,7 @@
 #   6. Prints FFmpeg installation instructions
 # ==============================================================================
 # License: MIT
-# Repository: https://github.com/distiled/orphion
+# Repository: https://github.com/bibimoni/orphion
 # ==============================================================================
 
 set -euo pipefail
@@ -246,7 +246,7 @@ install_golangci_lint() {
 clone_repo() {
     step "Setting up Orphion..."
 
-    local repo_url="https://github.com/distiled/orphion.git"
+    local repo_url="https://github.com/bibimoni/orphion.git"
     local clone_dir="${ORPHION_HOME:-$HOME/Projects/orphion}"
 
     if [ -d "$clone_dir/.git" ]; then
