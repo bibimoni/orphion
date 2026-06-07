@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/distiled/orphion/internal/common"
@@ -26,6 +28,9 @@ var availableProviders = []string{"hianime", "animekai", "kickassanime", "anikot
 
 // uriPattern matches URI="..." inside HLS tags like #EXT-X-I-FRAME-STREAM-INF.
 var uriPattern = regexp.MustCompile(`URI="[^"]*"`)
+
+// segmentWorkers is the number of concurrent segment downloads.
+const segmentWorkers = 16
 
 // episodeRef encodes the opaque episode identifier used between Episodes and Streams.
 type episodeRef struct {
@@ -426,8 +431,9 @@ func (c *Client) buildStreams(ctx context.Context, fileURL string) []provider.St
 	if fileURL == "" {
 		return nil
 	}
-	localM3U8, err := c.rewriteManifest(ctx, fileURL)
+	localTS, err := c.downloadSegments(ctx, fileURL)
 	if err != nil {
+		log.Printf("bettermelon: downloadSegments failed, falling back to proxy URL: %v", err)
 		// Fallback: return the raw proxy URL (may fail with obfuscated extensions).
 		proxied := c.proxiedURL(fileURL)
 		headers := make(http.Header)
@@ -438,7 +444,7 @@ func (c *Client) buildStreams(ctx context.Context, fileURL string) []provider.St
 	headers := make(http.Header)
 	headers.Set("Referer", "https://bettermelon.ru/")
 	headers.Set("User-Agent", c.userAgent)
-	return []provider.Stream{{URL: localM3U8, Quality: "", Headers: headers}}
+	return []provider.Stream{{URL: localTS, Quality: "", Headers: headers}}
 }
 
 // proxiedURL rewrites a CDN URL through the Bettermelon proxy.
@@ -458,10 +464,11 @@ func (c *Client) proxiedURL(rawURL string) string {
 	return proxy.String()
 }
 
-// rewriteManifest downloads the HLS manifest chain through the proxy,
-// appends #/seg.ts to every segment URL so ffmpeg uses the MPEG-TS
-// demuxer, and writes the result to a temporary file.
-func (c *Client) rewriteManifest(ctx context.Context, masterURL string) (string, error) {
+// downloadSegments downloads all HLS segments in parallel through the proxy,
+// concatenates them into a single MPEG-TS temp file, and returns a file:// URL.
+// This is much faster than ffmpeg's sequential HLS fetcher since segments
+// are downloaded concurrently with 8 workers.
+func (c *Client) downloadSegments(ctx context.Context, masterURL string) (string, error) {
 	proxiedMaster := c.proxiedURL(masterURL)
 	masterContent, err := c.fetchRaw(ctx, proxiedMaster)
 	if err != nil {
@@ -480,24 +487,175 @@ func (c *Client) rewriteManifest(ctx context.Context, masterURL string) (string,
 		}
 	}
 
-	// Add #/seg.ts fragment to segment URLs so ffmpeg detects MPEG-TS.
-	rewritten = c.addSegmentFragment(rewritten)
-
-	// Write to temp file.
-	f, err := os.CreateTemp("", "bettermelon-*.m3u8")
-	if err != nil {
-		return "", fmt.Errorf("create temp m3u8: %w", err)
+	// Extract segment URLs in order.
+	segments := c.extractSegmentURLs(rewritten)
+	if len(segments) == 0 {
+		return "", fmt.Errorf("no segments found in manifest")
 	}
-	if _, err := f.WriteString(rewritten); err != nil {
+
+	// Download segments in parallel and write to a temp .ts file.
+	f, err := os.CreateTemp("", "bettermelon-*.ts")
+	if err != nil {
+		return "", fmt.Errorf("create temp ts: %w", err)
+	}
+	tsPath := f.Name()
+
+	// Download all segments using a worker pool.
+	type segResult struct {
+		index int
+		data  []byte
+		err   error
+	}
+	jobs := make(chan int, len(segments))
+	results := make(chan segResult, len(segments))
+
+	var wg sync.WaitGroup
+	for i := 0; i < segmentWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range jobs {
+				segURL := segments[idx]
+				// Strip the #/seg.ts fragment if present (not needed for raw HTTP).
+				if hashIdx := strings.Index(segURL, "#"); hashIdx > 0 {
+					segURL = segURL[:hashIdx]
+				}
+				data, err := c.fetchRaw(ctx, segURL)
+				if err != nil {
+					select {
+					case results <- segResult{index: idx, err: err}:
+					case <-ctx.Done():
+					}
+					continue
+				}
+				select {
+				case results <- segResult{index: idx, data: data}:
+				case <-ctx.Done():
+				}
+			}
+		}()
+	}
+
+	// Enqueue all segment indices.
+	go func() {
+		for i := range segments {
+			select {
+			case jobs <- i:
+			case <-ctx.Done():
+				return
+			}
+		}
+		close(jobs)
+	}()
+
+	// Collect results in a goroutine.
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Assemble segments in order.
+	buffers := make([][]byte, len(segments))
+	var firstErr error
+	for res := range results {
+		if res.err != nil && firstErr == nil {
+			firstErr = res.err
+		}
+		if res.data != nil {
+			buffers[res.index] = res.data
+		}
+	}
+	if firstErr != nil {
 		_ = f.Close()
-		_ = os.Remove(f.Name())
-		return "", fmt.Errorf("write temp m3u8: %w", err)
+		_ = os.Remove(tsPath)
+		return "", fmt.Errorf("download segment: %w", firstErr)
+	}
+
+	// Write all segments in order to the temp file.
+	for _, buf := range buffers {
+		if buf == nil {
+			_ = f.Close()
+			_ = os.Remove(tsPath)
+			return "", fmt.Errorf("missing segment data")
+		}
+		if _, err := f.Write(buf); err != nil {
+			_ = f.Close()
+			_ = os.Remove(tsPath)
+			return "", fmt.Errorf("write segment: %w", err)
+		}
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(f.Name())
-		return "", fmt.Errorf("close temp m3u8: %w", err)
+		_ = os.Remove(tsPath)
+		return "", fmt.Errorf("close temp ts: %w", err)
 	}
-	return "file://" + f.Name(), nil
+	return "file://" + tsPath, nil
+}
+
+// fetchRaw performs a GET request and returns the response body as bytes.
+func (c *Client) fetchRaw(ctx context.Context, rawURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("User-Agent", c.userAgent)
+	req.Header.Set("Referer", "https://bettermelon.ru/")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request: %w", redactedRequestError{err: err})
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("upstream status %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, common.MaxResponseSize))
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+	return body, nil
+}
+
+// inlineSubManifests fetches sub-manifests referenced in a master m3u8
+// and replaces them with their inlined segment lines.
+func (c *Client) inlineSubManifests(ctx context.Context, content, baseURL string) (string, error) {
+	var out strings.Builder
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// If this line is a URL (not a tag, not empty), try fetching it as a sub-manifest.
+		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			subContent, err := c.fetchRaw(ctx, trimmed)
+			if err != nil {
+				// Can't fetch sub-manifest; keep original line.
+				out.WriteString(line)
+				out.WriteByte('\n')
+				continue
+			}
+			rewritten := c.rewriteManifestContent(string(subContent), trimmed)
+			out.WriteString(rewritten)
+			out.WriteByte('\n')
+			continue
+		}
+		out.WriteString(line)
+		out.WriteByte('\n')
+	}
+	return strings.TrimRight(out.String(), "\n"), nil
+}
+
+// extractSegmentURLs returns the ordered list of segment URLs from an m3u8 manifest.
+func (c *Client) extractSegmentURLs(content string) []string {
+	var segments []string
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			// This is a segment URL. Make sure it's absolute.
+			_ = i // unused
+			segments = append(segments, trimmed)
+		}
+	}
+	return segments
 }
 
 // rewriteManifestContent makes relative URLs absolute in an m3u8 manifest.
@@ -540,61 +698,6 @@ func (c *Client) rewriteURIAttribute(line string, base *url.URL) string {
 		}
 		return match
 	})
-}
-
-// addSegmentFragment appends #/seg.ts to segment URLs in the m3u8.
-func (c *Client) addSegmentFragment(content string) string {
-	rawLines := strings.Split(content, "\n")
-	lines := make([]string, 0, len(rawLines))
-	for _, line := range rawLines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" && !strings.HasPrefix(trimmed, "#") && strings.Contains(trimmed, "/proxy?url=") {
-			line = trimmed + "#/seg.ts"
-		}
-		lines = append(lines, line)
-	}
-	return strings.Join(lines, "\n")
-}
-
-// inlineSubManifests fetches sub-manifests referenced in the master playlist,
-// rewrites them, and returns a merged playlist with all segments inlined.
-func (c *Client) inlineSubManifests(ctx context.Context, masterContent, _ string) (string, error) {
-	var result []string
-	for _, line := range strings.Split(masterContent, "\n") {
-		trimmed := strings.TrimSpace(line)
-		// If this line is a URL (not a tag), fetch the sub-manifest.
-		if trimmed != "" && !strings.HasPrefix(trimmed, "#") && strings.Contains(trimmed, ".m3u8") {
-			subContent, err := c.fetchRaw(ctx, trimmed)
-			if err != nil {
-				return "", fmt.Errorf("fetch sub-manifest %s: %w", trimmed, err)
-			}
-			// Rewrite sub-manifest URLs to be absolute.
-			rewrittenSub := c.rewriteManifestContent(string(subContent), trimmed)
-			result = append(result, rewrittenSub)
-			continue
-		}
-		result = append(result, line)
-	}
-	return strings.Join(result, "\n"), nil
-}
-
-// fetchRaw performs a GET request and returns the response body.
-func (c *Client) fetchRaw(ctx context.Context, rawURL string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "*/*")
-	req.Header.Set("User-Agent", c.userAgent)
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("status %d", resp.StatusCode)
-	}
-	return io.ReadAll(io.LimitReader(resp.Body, common.MaxResponseSize))
 }
 
 // resolveURL resolves a possibly-relative URL against a base URL.

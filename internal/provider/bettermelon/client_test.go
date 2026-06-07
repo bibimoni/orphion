@@ -277,8 +277,13 @@ func TestStreamsReturnsM3U8WithHeaders(t *testing.T) {
 				}
 			}`), nil
 		case "/proxy":
-			// Serve the m3u8 manifest content.
-			return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nhttps://proxy.example.test/proxy?url=https://cdn.example.test/seg1.ts#/seg.ts\n#EXT-X-ENDLIST"), nil
+			// Serve the m3u8 manifest and segment data.
+			urlParam := req.URL.Query().Get("url")
+			if strings.Contains(urlParam, ".m3u8") {
+				return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nhttps://proxy.example.test/proxy?url=https://cdn.example.test/seg1.ts\n#EXTINF:10,\nhttps://proxy.example.test/proxy?url=https://cdn.example.test/seg2.ts\n#EXT-X-ENDLIST"), nil
+			}
+			// Segment data: return a small valid MPEG-TS packet.
+			return jsonResponse(http.StatusOK, "segment-data"), nil
 		default:
 			t.Fatalf("unexpected path = %s", req.URL.Path)
 			return nil, nil
@@ -293,9 +298,12 @@ func TestStreamsReturnsM3U8WithHeaders(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("len(Streams()) = %d", len(got))
 	}
-	// Stream URL should be a local file (from rewriteManifest).
+	// Stream URL should be a local file (from downloadSegments).
 	if !strings.HasPrefix(got[0].URL, "file://") {
 		t.Fatalf("URL = %q, want local file:// URL", got[0].URL)
+	}
+	if !strings.HasSuffix(got[0].URL, ".ts") {
+		t.Fatalf("URL = %q, want .ts extension", got[0].URL)
 	}
 	if got[0].Headers.Get("Referer") == "" {
 		t.Fatal("missing Referer header")
@@ -309,12 +317,11 @@ func TestStreamsTriesFallbackProviders(t *testing.T) {
 	requests := 0
 	client := testClient(t, func(req *http.Request) (*http.Response, error) {
 		requests++
+		path := req.URL.Path
 		switch {
-		case requests == 1 && req.URL.Path == "/anime/154587/1/hianime":
-			// Primary provider (hianime) returns error.
+		case requests == 1 && path == "/anime/154587/1/hianime":
 			return jsonResponse(http.StatusBadGateway, "error"), nil
-		case requests == 2 && req.URL.Path == "/anime/154587/1/animekai":
-			// Fallback to animekai returns success.
+		case requests == 2 && path == "/anime/154587/1/animekai":
 			return jsonResponse(http.StatusOK, `{
 				"success": true,
 				"data": {
@@ -325,11 +332,14 @@ func TestStreamsTriesFallbackProviders(t *testing.T) {
 					}
 				}
 			}`), nil
-		case req.URL.Path == "/proxy":
-			// Serve m3u8 manifest content.
-			return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nhttps://proxy.example.test/proxy?url=https://cdn.example.test/seg1.ts#/seg.ts\n#EXT-X-ENDLIST"), nil
+		case path == "/proxy":
+			urlParam := req.URL.Query().Get("url")
+			if strings.Contains(urlParam, ".m3u8") {
+				return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nhttps://proxy.example.test/proxy?url=https://cdn.example.test/seg1.ts\n#EXT-X-ENDLIST"), nil
+			}
+			return jsonResponse(http.StatusOK, "segment"), nil
 		default:
-			t.Fatalf("unexpected request %d to %s", requests, req.URL.Path)
+			t.Fatalf("unexpected request %d to %s", requests, path)
 			return nil, nil
 		}
 	})
@@ -522,7 +532,11 @@ func TestStreamsCDNURLIsProxied(t *testing.T) {
 				}
 			}`), nil
 		case "/proxy":
-			return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\n/proxy?url=https://cdn.mewstream.buzz/seg1.ts\n#EXT-X-ENDLIST"), nil
+			urlParam := req.URL.Query().Get("url")
+			if strings.Contains(urlParam, ".m3u8") {
+				return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\n/proxy?url=https://cdn.mewstream.buzz/seg1.ts\n#EXT-X-ENDLIST"), nil
+			}
+			return jsonResponse(http.StatusOK, "segment-data"), nil
 		default:
 			t.Fatalf("unexpected path = %s", req.URL.Path)
 			return nil, nil
@@ -537,9 +551,12 @@ func TestStreamsCDNURLIsProxied(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("len = %d", len(got))
 	}
-	// Should be a local file:// URL (manifest was downloaded and rewritten).
+	// Should be a local file:// URL (segments were downloaded and concatenated).
 	if !strings.HasPrefix(got[0].URL, "file://") {
 		t.Fatalf("URL not local file: %q", got[0].URL)
+	}
+	if !strings.HasSuffix(got[0].URL, ".ts") {
+		t.Fatalf("URL not .ts: %q", got[0].URL)
 	}
 }
 
@@ -561,7 +578,11 @@ func TestStreamsAlreadyProxiedURLIsNotDoubleProxied(t *testing.T) {
 				}
 			}`), nil
 		case "/proxy":
-			return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nhttps://proxy.example.test/proxy?url=https://cdn.example.test/seg1.ts\n#EXT-X-ENDLIST"), nil
+			urlParam := req.URL.Query().Get("url")
+			if strings.Contains(urlParam, ".m3u8") {
+				return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nhttps://proxy.example.test/proxy?url=https://cdn.example.test/seg1.ts\n#EXT-X-ENDLIST"), nil
+			}
+			return jsonResponse(http.StatusOK, "segment-data"), nil
 		default:
 			t.Fatalf("unexpected path = %s", req.URL.Path)
 			return nil, nil

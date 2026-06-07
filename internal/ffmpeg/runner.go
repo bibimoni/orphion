@@ -113,7 +113,7 @@ func appendHLSFlags(args []string, url string) []string {
 // isHLS returns true if the URL looks like an HLS manifest.
 func isHLS(url string) bool {
 	lower := strings.ToLower(url)
-	return strings.Contains(lower, ".m3u8") || strings.Contains(lower, "/proxy?url=")
+	return (strings.Contains(lower, ".m3u8") || strings.Contains(lower, "/proxy?url=")) && !strings.Contains(lower, ".ts")
 }
 
 // Execute runs the FFmpeg binary.

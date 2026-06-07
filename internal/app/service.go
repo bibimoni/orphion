@@ -354,16 +354,21 @@ func (s *Service) executeJob(ctx context.Context, job download.Job) (string, err
 			s.progressCb(job.Episode, p)
 		}
 		if err := s.runner.ExecuteWithProgress(ctx, args, progressFn); err != nil {
+			cleanupTempInput(streamURL)
 			_ = os.Remove(partPath)
 			return "", fmt.Errorf("ffmpeg: %w", err)
 		}
 	} else {
 		args := s.runner.Args(streamURL, partPath, selectedHeaders.Get("Referer"), selectedHeaders.Get("User-Agent"))
 		if err := s.runner.Execute(ctx, args); err != nil {
+			cleanupTempInput(streamURL)
 			_ = os.Remove(partPath)
 			return "", fmt.Errorf("ffmpeg: %w", err)
 		}
 	}
+
+	// Clean up temp input files (e.g. bettermelon-*.ts segment cache).
+	cleanupTempInput(streamURL)
 
 	// Atomic rename.
 	if err := os.Rename(partPath, outPath); err != nil {
@@ -518,4 +523,14 @@ func parseSortKey(s string) float64 {
 	var val float64
 	_, _ = fmt.Sscanf(s, "%f", &val)
 	return val
+}
+
+// cleanupTempInput removes local temp files used as ffmpeg input
+// (e.g. bettermelon-*.ts segment caches downloaded by the provider).
+func cleanupTempInput(streamURL string) {
+	if !strings.HasPrefix(streamURL, "file://") {
+		return
+	}
+	path := streamURL[len("file://"):]
+	_ = os.Remove(path)
 }
