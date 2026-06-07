@@ -5,6 +5,9 @@
 -->
 
 <!-- PROJECT SHIELDS -->
+<!--
+*** Reference-style links at the bottom of the document
+-->
 [![Contributors][contributors-shield]][contributors-url]
 [![Forks][forks-shield]][forks-url]
 [![Stargazers][stars-shield]][stars-url]
@@ -15,7 +18,7 @@
 <br />
 <div align="center">
 
-<h1 align="center">🎬 Orphion</h1>
+<h1 align="center">Orphion</h1>
 
   <p align="center">
     A command-line tool to search an anime source and download<br/>
