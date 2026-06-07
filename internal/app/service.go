@@ -1,6 +1,5 @@
 package app
 
-// Import net/http
 import (
 	"context"
 	"fmt"
@@ -21,6 +20,7 @@ type Config struct {
 	OutputDir    string
 	Concurrency  int
 	PreferredQty string
+	Force        bool
 }
 
 // Service orchestrates content lookup and download.
@@ -198,9 +198,11 @@ baseDir := expandTilde(s.config.OutputDir)
 	outPath := paths.OutputLayout(baseDir, title, job.Episode)
 	partPath := paths.PartialPath(baseDir, title, job.Episode)
 
-	// Skip if final file already exists.
-	if _, err := os.Stat(outPath); err == nil {
-		return nil
+	// Skip if final file already exists, unless forced.
+	if !s.config.Force {
+		if _, err := os.Stat(outPath); err == nil {
+			return nil
+		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(partPath), 0o755); err != nil {
@@ -253,6 +255,11 @@ func (s *Service) SetConcurrency(n int) {
 // GetEpisodes returns episode info for an anime.
 func (s *Service) GetEpisodes(ctx context.Context, animeID string) ([]provider.Episode, error) {
 	return s.provider.Episodes(ctx, animeID)
+}
+
+// SetForce enables or disables force overwrite of existing files.
+func (s *Service) SetForce(v bool) {
+	s.config.Force = v
 }
 
 func parseSortKey(s string) float64 {

@@ -88,6 +88,7 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 		quality     string
 		outputDir   string
 		concurrency int
+		force       bool
 	)
 
 	cmd := &cobra.Command{
@@ -116,6 +117,9 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 			}
 			if concurrency > 0 {
 				service.SetConcurrency(concurrency)
+			}
+			if force {
+				service.SetForce(true)
 			}
 
 			id := animeID
@@ -146,6 +150,7 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 	cmd.Flags().StringVar(&quality, "quality", "", "Preferred quality (e.g. 1080p)")
 	cmd.Flags().StringVar(&outputDir, "output", "", "Output directory")
 	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "Download concurrency (1-4)")
+	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing files")
 
 	return cmd
 }
