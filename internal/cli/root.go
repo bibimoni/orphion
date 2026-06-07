@@ -74,7 +74,7 @@ func newSearchCmd(service *app.Service) *cobra.Command {
 				return err
 			}
 			for _, a := range result.Anime {
-				fmt.Fprintf(cmd.OutOrStdout(), "  %s\t%s\n", a.ID, a.Title)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s\t%s\n", a.ID, a.Title)
 			}
 			return nil
 		},
