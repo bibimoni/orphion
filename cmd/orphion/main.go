@@ -16,6 +16,8 @@ import (
 	"github.com/distiled/orphion/internal/provider"
 	"github.com/distiled/orphion/internal/provider/allanime"
 	"github.com/distiled/orphion/internal/provider/dramacool"
+	"github.com/distiled/orphion/internal/provider/nyaa"
+	"github.com/distiled/orphion/internal/torrent"
 )
 
 func main() {
@@ -47,10 +49,19 @@ func main() {
 		os.Exit(2)
 	}
 
+	// Create torrent client for magnet URI downloads (lazy-init on first use).
+	torrentClient, err := torrent.NewClient(torrent.Config{DataDir: filepath.Join(expandTilde(cfg.OutputDir), ".torrents")})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "orphion: torrent:", err)
+		os.Exit(2)
+	}
+	defer func() { _ = torrentClient.Close() }()
+
 	appCfg := app.Config{
-		OutputDir:    cfg.OutputDir,
-		Concurrency:  cfg.Concurrency,
-		PreferredQty: cfg.PreferredQuality,
+		OutputDir:     cfg.OutputDir,
+		Concurrency:   cfg.Concurrency,
+		PreferredQty:  cfg.PreferredQuality,
+		TorrentClient: torrentClient,
 	}
 	service := app.New(contentProvider, runner, appCfg)
 
@@ -70,8 +81,10 @@ func newProvider(name, apiKey string) (provider.Provider, error) {
 		cfg := dramacool.DefaultConfig()
 		cfg.APIKey = apiKey
 		return dramacool.NewProvider(cfg)
+	case "nyaa":
+		return nyaa.NewProvider(nyaa.DefaultConfig())
 	default:
-		return nil, fmt.Errorf("unknown provider %q (available: allanime, dramacool)", name)
+		return nil, fmt.Errorf("unknown provider %q (available: allanime, dramacool, nyaa)", name)
 	}
 }
 
@@ -106,4 +119,17 @@ func classifyError(err error) int {
 	default:
 		return 1
 	}
+}
+
+func expandTilde(path string) string {
+	if path == "" {
+		return path
+	}
+	if path[0] == '~' {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return filepath.Join(home, path[1:])
+		}
+	}
+	return path
 }

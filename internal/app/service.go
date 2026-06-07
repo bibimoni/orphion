@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/distiled/orphion/internal/download"
@@ -15,14 +16,16 @@ import (
 	"github.com/distiled/orphion/internal/paths"
 	"github.com/distiled/orphion/internal/provider"
 	"github.com/distiled/orphion/internal/quality"
+	"github.com/distiled/orphion/internal/torrent"
 )
 
 // Config holds application service configuration.
 type Config struct {
-	OutputDir    string
-	Concurrency  int
-	PreferredQty string
-	Force        bool
+	OutputDir     string
+	Concurrency   int
+	PreferredQty  string
+	Force         bool
+	TorrentClient *torrent.Client
 }
 
 // ProgressCallback receives progress updates during a download.
@@ -30,20 +33,22 @@ type ProgressCallback func(episode string, progress ffmpeg.Progress)
 
 // Service orchestrates content lookup and download.
 type Service struct {
-	provider   provider.Provider
-	scheduler  *download.Scheduler
-	runner     *ffmpeg.Runner
-	config     Config
-	progressCb ProgressCallback
+	provider      provider.Provider
+	scheduler     *download.Scheduler
+	runner        *ffmpeg.Runner
+	torrentClient *torrent.Client
+	config        Config
+	progressCb    ProgressCallback
 }
 
 // New creates a new app service.
 func New(p provider.Provider, runner *ffmpeg.Runner, cfg Config) *Service {
 	return &Service{
-		provider:  p,
-		scheduler: download.NewScheduler(cfg.Concurrency),
-		runner:    runner,
-		config:    cfg,
+		provider:      p,
+		scheduler:     download.NewScheduler(cfg.Concurrency),
+		runner:        runner,
+		torrentClient: cfg.TorrentClient,
+		config:        cfg,
 	}
 }
 
@@ -251,6 +256,11 @@ func (s *Service) executeJob(ctx context.Context, job download.Job) (string, err
 		}
 	}
 
+	// Route magnet URIs to the torrent client, everything else to FFmpeg.
+	if strings.HasPrefix(streamURL, "magnet:?") {
+		return s.executeTorrentJob(ctx, streamURL, baseDir, title, outPath)
+	}
+
 	if err := os.MkdirAll(filepath.Dir(partPath), 0o755); err != nil {
 		return "", fmt.Errorf("create output dir: %w", err)
 	}
@@ -280,6 +290,36 @@ func (s *Service) executeJob(ctx context.Context, job download.Job) (string, err
 	}
 
 	return outPath, nil
+}
+
+// executeTorrentJob downloads a torrent from a magnet URI.
+func (s *Service) executeTorrentJob(ctx context.Context, magnetURI, baseDir, title, outPath string) (string, error) {
+	if s.torrentClient == nil {
+		return "", fmt.Errorf("torrent client not initialized (magnet URI provided but no torrent support)")
+	}
+
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		return "", fmt.Errorf("create output dir: %w", err)
+	}
+
+	paths, err := s.torrentClient.Download(ctx, magnetURI, baseDir)
+	if err != nil {
+		return "", fmt.Errorf("torrent: %w", err)
+	}
+
+	if len(paths) == 0 {
+		return "", fmt.Errorf("torrent: no files downloaded")
+	}
+
+	// If a single file was downloaded, try to move it to the expected output path.
+	if len(paths) == 1 && outPath != "" {
+		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err == nil {
+			_ = os.Rename(paths[0], outPath)
+			return outPath, nil
+		}
+	}
+
+	return paths[0], nil
 }
 
 // SetOutputDir updates the output directory.

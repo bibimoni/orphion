@@ -38,7 +38,7 @@ func SetDefaults(cfg *Config) {
 		cfg.Concurrency = 1
 	}
 	if cfg.Provider == "" {
-		cfg.Provider = "dramacool"
+		cfg.Provider = "nyaa"
 	}
 	if cfg.FFmpegPath == "" {
 		cfg.FFmpegPath = "ffmpeg"
@@ -125,7 +125,7 @@ func decode(data []byte, path string) (*Config, error) {
 	if rawCfg.Provider != nil {
 		cfg.Provider = *rawCfg.Provider
 	} else {
-		cfg.Provider = "dramacool"
+		cfg.Provider = "nyaa"
 	}
 	if rawCfg.ProviderAPIKey != nil {
 		cfg.ProviderAPIKey = *rawCfg.ProviderAPIKey
