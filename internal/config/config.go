@@ -20,9 +20,6 @@ type Config struct {
 	concurrencyExplicit bool
 }
 
-// ErrConfigRequired is returned when the configuration file does not exist.
-var ErrConfigRequired = fmt.Errorf("configuration file not found; run `orphion config init` to create one")
-
 // ErrConfigExists is returned when a configuration file already exists.
 var ErrConfigExists = fmt.Errorf("configuration file already exists")
 
@@ -56,17 +53,46 @@ type raw struct {
 }
 
 // Load reads and validates a configuration YAML file.
-// Returns ErrConfigRequired if the file does not exist.
+// Returns an error if the file does not exist or is invalid.
 // Unknown fields are rejected.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, ErrConfigRequired
-		}
 		return nil, fmt.Errorf("read config %s: %w", path, err)
 	}
 
+	cfg, err := decode(data, path)
+	if err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// LoadOrCreate loads the config file if it exists. If it doesn't, it creates
+// one with defaults and returns it. This ensures the app works on first run
+// without requiring the user to run "config init" manually.
+func LoadOrCreate(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err == nil {
+		return decode(data, path)
+	}
+
+	if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("read config %s: %w", path, err)
+	}
+
+	// File doesn't exist — create it with defaults.
+	cfg := &Config{}
+	SetDefaults(cfg)
+
+	if err := writeConfigFile(path, cfg); err != nil {
+		return nil, fmt.Errorf("create default config: %w", err)
+	}
+
+	return cfg, nil
+}
+
+func decode(data []byte, path string) (*Config, error) {
 	// Strict decode to detect unknown fields.
 	rawCfg := &raw{}
 	dec := yaml.NewDecoder(strings.NewReader(string(data)))
@@ -137,8 +163,13 @@ func Init(path string) error {
 		return fmt.Errorf("%w: %s", ErrConfigExists, path)
 	}
 
-	cfg := Config{}
-	SetDefaults(&cfg)
+	cfg := &Config{}
+	SetDefaults(cfg)
+	return writeConfigFile(path, cfg)
+}
+
+// writeConfigFile marshals and writes the config to disk.
+func writeConfigFile(path string, cfg *Config) error {
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)

@@ -2,11 +2,14 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
-	"github.com/distiled/orphion/internal/app"
 	"github.com/pterm/pterm"
+	"github.com/pterm/pterm/putils"
 	"github.com/spf13/cobra"
+
+	"github.com/distiled/orphion/internal/app"
 )
 
 // setInteractiveRoot configures the root command for interactive mode when
@@ -24,8 +27,11 @@ func setInteractiveRoot(root *cobra.Command, service *app.Service) {
 func runInteractive(cmd *cobra.Command, service *app.Service) error {
 	ctx := cmd.Context()
 
-	// Welcome
-	pterm.DefaultBasicText.Println("Orphion – Search and download episodes")
+	// Branded header.
+	_ = pterm.DefaultBigText.WithLetters(
+		putils.LettersFromStringWithStyle("Orphion", pterm.NewStyle(pterm.FgCyan)),
+	).Render()
+	pterm.Println(pterm.Gray("Search and download episodes"))
 
 	// Step 1: Search text
 	query, err := pterm.DefaultInteractiveTextInput.WithDefaultText("Search: ").Show()
@@ -46,14 +52,18 @@ func runInteractive(cmd *cobra.Command, service *app.Service) error {
 		return fmt.Errorf("type selection: %w", err)
 	}
 
-	// Step 3: Search for titles
+	// Step 3: Search for titles with spinner
+	spinner, _ := pterm.DefaultSpinner.Start(fmt.Sprintf("Searching for %q...", query))
 	result, err := service.Search(ctx, query, resType)
 	if err != nil {
+		spinner.Fail(fmt.Sprintf("Search failed: %s", err))
 		return fmt.Errorf("search: %w", err)
 	}
 	if len(result.Anime) == 0 {
+		spinner.Fail("No results found")
 		return fmt.Errorf("no results for %q", query)
 	}
+	spinner.Success(fmt.Sprintf("Found %d result(s)", len(result.Anime)))
 
 	// Step 4: Select an anime
 	opts := make([]string, len(result.Anime))
@@ -80,17 +90,30 @@ func runInteractive(cmd *cobra.Command, service *app.Service) error {
 		return fmt.Errorf("episode input: %w", err)
 	}
 
-	pterm.Info.Println(fmt.Sprintf("Downloading episodes: %s", epExpr))
+	// Step 6: Download with animated progress
+	pterm.Info.Printfln("Downloading %s episodes: %s", pterm.Cyan(selectedTitle), epExpr)
 
-	// Step 6: Download
+	service.SetProgressCallback(downloadProgressCallback)
+
 	downloadResult, _, err := service.DownloadEpisodes(ctx, animeID, epExpr, selectedTitle)
 	if err != nil {
 		return err
 	}
 
-	pterm.Success.Println(
-		fmt.Sprintf("Download complete: %d completed, %d failed",
-			downloadResult.Completed, downloadResult.Failed))
+	// Clear progress line and show final results.
+	fmt.Fprintln(os.Stderr)
+
+	if len(downloadResult.Outputs) > 0 {
+		dir := outputDirFor(downloadResult.Outputs[0])
+		pterm.Success.Printfln("Saved to %s", pterm.LightBlue(dir))
+	}
+
+	if downloadResult.Failed > 0 {
+		pterm.Error.Printfln("%d completed, %d failed",
+			downloadResult.Completed, downloadResult.Failed)
+	} else {
+		pterm.Success.Printfln("%d episode(s) downloaded", downloadResult.Completed)
+	}
 
 	return nil
 }

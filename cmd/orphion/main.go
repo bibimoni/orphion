@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -26,22 +25,10 @@ func main() {
 
 	cfgPath := defaultConfigPath()
 
-	// Check if this command can run without a config file.
-	// Commands like "config init" and "version" don't need one.
-	if !configNeeded(os.Args[1:]) {
-		runWithoutConfig(ctx, cfgPath)
-		return
-	}
-
-	// Load configuration. The config file is required — all runtime
-	// values come from the file, not from hardcoded defaults.
-	cfg, err := config.Load(cfgPath)
+	// Load or auto-create configuration. On first run, a default config
+	// file is written so the user can discover and edit it later.
+	cfg, err := config.LoadOrCreate(cfgPath)
 	if err != nil {
-		if errors.Is(err, config.ErrConfigRequired) {
-			fmt.Fprintln(os.Stderr, "orphion: configuration file not found.")
-			fmt.Fprintf(os.Stderr, "Run `orphion config init` to create one at %s\n", cfgPath)
-			os.Exit(2)
-		}
 		fmt.Fprintln(os.Stderr, "orphion: config:", err)
 		os.Exit(2)
 	}
@@ -70,41 +57,6 @@ func main() {
 
 	if err := root.Execute(); err != nil {
 		handleError(ctx, err)
-	}
-}
-
-// runWithoutConfig runs commands that don't require a config file
-// (config init, version) using a nil service.
-func runWithoutConfig(ctx context.Context, cfgPath string) {
-	root := cli.New(nil)
-	root.SetContext(ctx)
-
-	// Override the config init path to use the resolved default.
-	cli.SetConfigInitPath(cfgPath)
-
-	if err := root.Execute(); err != nil {
-		handleError(ctx, err)
-	}
-}
-
-// configNeeded returns true if the given args require a config file.
-// Commands like "config init" and "version" can run without one.
-func configNeeded(args []string) bool {
-	if len(args) == 0 {
-		// Root command (interactive mode) needs config.
-		return false // Will be caught by service being nil
-	}
-
-	switch args[0] {
-	case "config":
-		// "config init" doesn't need config, but "config" alone is invalid.
-		return false
-	case "version":
-		return false
-	case "help":
-		return false
-	default:
-		return true
 	}
 }
 

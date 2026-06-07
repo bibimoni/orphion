@@ -5,16 +5,18 @@ import (
 	"os"
 	"strings"
 
+	"github.com/pterm/pterm"
+	"github.com/spf13/cobra"
+
 	"github.com/distiled/orphion/internal/app"
 	"github.com/distiled/orphion/internal/config"
-	"github.com/spf13/cobra"
+	"github.com/distiled/orphion/internal/ffmpeg"
 )
 
 // Version is set at build time.
 var Version = "dev"
 
-// configInitPath is the path used by "config init". Overridden by main
-// when the config path is resolved before service initialization.
+// configInitPath is the path used by "config init".
 var configInitPath string
 
 // SetConfigInitPath sets the path used by "orphion config init".
@@ -27,10 +29,10 @@ func New(service *app.Service) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "orphion",
 		Short: "Search and download episodes",
-		Long: `Orphion searches a catalog provider for content and downloads
-selected episodes as MKV files through system FFmpeg.
-
-Run without arguments to start interactive mode.`,
+		Long: fmt.Sprintf("%s\n\n%s",
+			pterm.Cyan("Orphion"),
+			"Search a catalog provider and download episodes as MKV files."),
+		SilenceUsage: true,
 	}
 	setInteractiveRoot(root, service)
 
@@ -47,7 +49,7 @@ func newVersionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print the version",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Fprintf(cmd.OutOrStdout(), "orphion version %s\n", Version)
+			pterm.Fprintln(cmd.OutOrStdout(), fmt.Sprintf("orphion %s", pterm.Cyan(Version)))
 			return nil
 		},
 	}
@@ -66,7 +68,11 @@ func newConfigCmd() *cobra.Command {
 			if path == "" {
 				path = fmt.Sprintf("%s/.config/orphion/config.yaml", os.Getenv("HOME"))
 			}
-			return config.Init(path)
+			if err := config.Init(path); err != nil {
+				return err
+			}
+			pterm.Success.Printfln("Created config at %s", pterm.LightBlue(path))
+			return nil
 		},
 	})
 	return root
@@ -83,13 +89,40 @@ func newSearchCmd(service *app.Service) *cobra.Command {
 				return fmt.Errorf("service not configured")
 			}
 			resType = strings.TrimSpace(resType)
+
+			// When stdout is not a terminal (piped), output machine-readable
+			// tab-separated format for scripting. Otherwise, show a rich TUI.
+			if !isTerminal(os.Stdout) {
+				result, err := service.Search(cmd.Context(), args[0], resType)
+				if err != nil {
+					return err
+				}
+				for _, a := range result.Anime {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", a.ID, a.Title)
+				}
+				return nil
+			}
+
+			spinner, _ := pterm.DefaultSpinner.Start(fmt.Sprintf("Searching for %q...", args[0]))
 			result, err := service.Search(cmd.Context(), args[0], resType)
 			if err != nil {
+				spinner.Fail(fmt.Sprintf("Search failed: %s", err))
 				return err
 			}
-			for _, a := range result.Anime {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", a.ID, a.Title)
+			spinner.Success(fmt.Sprintf("Found %d result(s)", len(result.Anime)))
+
+			if len(result.Anime) == 0 {
+				pterm.Info.Println("No results found.")
+				return nil
 			}
+
+			// Render results as a styled table.
+			tableData := pterm.TableData{{pterm.Cyan("ID"), pterm.Cyan("Title")}}
+			for _, a := range result.Anime {
+				tableData = append(tableData, []string{a.ID, a.Title})
+			}
+			_ = pterm.DefaultTable.WithHasHeader().WithData(tableData).Render()
+
 			return nil
 		},
 	}
@@ -116,8 +149,6 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 			if service == nil {
 				return fmt.Errorf("service not configured")
 			}
-			// Trim whitespace from all string flags to guard against
-			// copy-paste or shell expansion artifacts.
 			animeID = strings.TrimSpace(animeID)
 			title = strings.TrimSpace(title)
 			episodes = strings.TrimSpace(episodes)
@@ -146,23 +177,37 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 				service.SetForce(true)
 			}
 
-			id := animeID
-			if id == "" {
+			// Resolve title to ID if needed.
+			if animeID == "" {
+				spinner, _ := pterm.DefaultSpinner.Start(fmt.Sprintf("Resolving %q...", title))
 				var err error
-				id, err = service.ResolveID(cmd.Context(), title, resType)
+				animeID, err = service.ResolveID(cmd.Context(), title, resType)
 				if err != nil {
+					spinner.Fail(fmt.Sprintf("Resolve failed: %s", err))
 					return err
 				}
+				spinner.Success(fmt.Sprintf("Resolved to %s", pterm.Cyan(animeID)))
 			}
 
-			result, _, err := service.DownloadEpisodes(cmd.Context(), id, episodes, title)
+			// Set up progress display.
+			service.SetProgressCallback(downloadProgressCallback)
+
+			result, _, err := service.DownloadEpisodes(cmd.Context(), animeID, episodes, title)
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%d completed, %d failed\n", result.Completed, result.Failed)
+
+			// Show output directory for completed downloads.
+			if len(result.Outputs) > 0 {
+				dir := outputDirFor(result.Outputs[0])
+				pterm.Success.Printfln("Saved to %s", pterm.LightBlue(dir))
+			}
+
 			if result.Failed > 0 {
+				pterm.Error.Printfln("%d completed, %d failed", result.Completed, result.Failed)
 				return &ExitError{code: 1, msg: "some downloads failed"}
 			}
+			pterm.Success.Printfln("%d episode(s) downloaded", result.Completed)
 			return nil
 		},
 	}
@@ -177,4 +222,54 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing files")
 
 	return cmd
+}
+
+// downloadProgressCallback displays an animated spinner with live download stats.
+func downloadProgressCallback(episode string, progress ffmpeg.Progress) {
+	speed := progress.Speed
+	if speed == "" {
+		speed = "..."
+	}
+	size := formatBytes(progress.Bytes)
+	label := fmt.Sprintf("Episode %s", episode)
+
+	// Write a single updating line to stderr (overwrites itself).
+	pterm.Fprinto(os.Stderr, fmt.Sprintf("  %s %s  %s/s  %s",
+		pterm.Cyan("↓"), pterm.Bold.Sprint(label), pterm.Yellow(speed), size))
+}
+
+// formatBytes returns a human-readable byte string.
+func formatBytes(b int64) string {
+	const (
+		kiB = 1024
+		miB = 1024 * kiB
+		giB = 1024 * miB
+	)
+	switch {
+	case b >= giB:
+		return fmt.Sprintf("%.1f GiB", float64(b)/float64(giB))
+	case b >= miB:
+		return fmt.Sprintf("%.1f MiB", float64(b)/float64(miB))
+	case b >= kiB:
+		return fmt.Sprintf("%.1f KiB", float64(b)/float64(kiB))
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
+}
+
+// isTerminal reports whether f is a terminal (character device).
+func isTerminal(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// outputDirFor extracts the directory portion of a file path.
+func outputDirFor(filePath string) string {
+	if idx := strings.LastIndexByte(filePath, '/'); idx >= 0 {
+		return filePath[:idx]
+	}
+	return filePath
 }
