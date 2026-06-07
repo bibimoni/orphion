@@ -17,6 +17,26 @@ Confirm:
 ffmpeg -version
 ```
 
+## Installation
+
+Install the latest published binary:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bibimoni/orphion/main/install.sh | bash
+```
+
+The installer downloads the matching archive from GitHub Releases, verifies
+its SHA-256 checksum, and installs `orphion` to `/usr/local/bin`. It does not
+install Go and does not use a Homebrew package for Orphion. Homebrew is listed
+only as one way to install FFmpeg.
+
+Override the installation directory when needed:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bibimoni/orphion/main/install.sh \
+  | ORPHION_INSTALL_DIR="$HOME/.local/bin" bash
+```
+
 ## Interactive Mode
 
 Run without arguments:
