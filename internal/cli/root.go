@@ -256,23 +256,49 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 
 // newProgressCallback returns a ProgressCallback that updates a pterm spinner
 // with live download stats. The spinner animates continuously while
-// UpdateText refreshes the displayed speed/size on each FFmpeg progress event.
+// UpdateText refreshes the displayed speed/size on each progress event.
 func newProgressCallback(spinner *pterm.SpinnerPrinter) app.ProgressCallback {
 	return func(episode string, progress ffmpeg.Progress) {
-		if progress.Speed == "" && progress.Bytes == 0 {
-			// Initial callback — download is starting, no data yet.
-			spinner.UpdateText(fmt.Sprintf("%s Episode %s  connecting...",
-				pterm.Cyan("↓"), episode))
-			return
-		}
-		speed := progress.Speed
-		if speed == "" {
-			speed = "..."
-		}
-		size := formatBytes(progress.Bytes)
-		spinner.UpdateText(fmt.Sprintf("%s Episode %s  %s/s  %s",
-			pterm.Cyan("↓"), episode, pterm.Yellow(speed), size))
+		spinner.UpdateText(formatProgressLine(episode, progress))
 	}
+}
+
+func formatProgressLine(episode string, progress ffmpeg.Progress) string {
+	if progress.Speed == "" && progress.Bytes == 0 && progress.TotalBytes == 0 {
+		return fmt.Sprintf("%s Episode %s  connecting...",
+			pterm.Cyan("↓"), episode)
+	}
+	if progress.Speed == "metadata" {
+		return fmt.Sprintf("%s Episode %s  metadata  %s",
+			pterm.Cyan("↓"), episode, formatBytes(progress.TotalBytes))
+	}
+
+	speed := progress.Speed
+	if speed == "" {
+		speed = "..."
+	}
+
+	size := formatBytes(progress.Bytes)
+	if progress.TotalBytes > 0 {
+		size = fmt.Sprintf("%s / %s", size, formatBytes(progress.TotalBytes))
+	}
+
+	// For torrents, Speed contains "X MiB/s" from humanizeSpeed.
+	// For FFmpeg, Speed contains "Xx" multiplier.
+	if strings.HasSuffix(speed, "iB/s") || strings.HasSuffix(speed, "B/s") {
+		if progress.Bytes == 0 && progress.TotalBytes > 0 && progress.Peers == 0 && progress.Seeders == 0 {
+			return fmt.Sprintf("%s Episode %s  waiting for peers  %s  %d peers",
+				pterm.Cyan("↓"), episode, size, progress.Peers)
+		}
+		if progress.TotalBytes > 0 {
+			return fmt.Sprintf("%s Episode %s  %s  %s  peers=%d seeders=%d",
+				pterm.Cyan("↓"), episode, pterm.Yellow(speed), size, progress.Peers, progress.Seeders)
+		}
+		return fmt.Sprintf("%s Episode %s  %s  %s",
+			pterm.Cyan("↓"), episode, pterm.Yellow(speed), size)
+	}
+	return fmt.Sprintf("%s Episode %s  %s/s  %s",
+		pterm.Cyan("↓"), episode, pterm.Yellow(speed), size)
 }
 
 // formatBytes returns a human-readable byte string.

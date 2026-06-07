@@ -17,6 +17,9 @@ type Episode struct {
 	ID      string
 	Number  string
 	SortKey float64
+	Title   string
+	Size    string
+	Seeders int
 }
 
 // Stream represents a downloadable quality variant.

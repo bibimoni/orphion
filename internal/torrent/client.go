@@ -21,6 +21,9 @@ type Config struct {
 	// Timeout is the maximum time to wait for download completion.
 	// 0 means no timeout (waits indefinitely).
 	Timeout time.Duration
+	// OnProgress is called periodically with download progress.
+	// Pct is 0-100, downloaded/total in bytes, speed in bytes/sec, peers and seeders count.
+	OnProgress func(pct float64, downloaded, total int64, speed float64, peers, seeders int)
 }
 
 // Client wraps anacrolix/torrent for magnet URI downloads.
@@ -54,8 +57,7 @@ func (c *Client) initClient() error {
 			return
 		}
 
-		clientCfg := torrent.NewDefaultClientConfig()
-		clientCfg.DataDir = dataDir
+		clientCfg := newAnacrolixConfig(dataDir)
 
 		cl, err := torrent.NewClient(clientCfg)
 		if err != nil {
@@ -67,6 +69,13 @@ func (c *Client) initClient() error {
 		c.initOk = true
 	})
 	return initErr
+}
+
+func newAnacrolixConfig(dataDir string) *torrent.ClientConfig {
+	clientCfg := torrent.NewDefaultClientConfig()
+	clientCfg.DataDir = dataDir
+	clientCfg.NoDefaultPortForwarding = true
+	return clientCfg
 }
 
 // Close shuts down the torrent client gracefully.
@@ -83,6 +92,11 @@ func (c *Client) Close() error {
 		}
 	}
 	return first
+}
+
+// SetOnProgress sets the progress callback for download updates.
+func (c *Client) SetOnProgress(fn func(pct float64, downloaded, total int64, speed float64, peers, seeders int)) {
+	c.cfg.OnProgress = fn
 }
 
 // Download downloads a torrent from a magnet URI to the given output directory.
@@ -123,8 +137,10 @@ func (c *Client) Download(ctx context.Context, magnetURI, outputDir string) ([]s
 	// Download all files in the torrent.
 	t.DownloadAll()
 
-	fmt.Fprintf(os.Stderr, "  Downloading: %s (%d files, %s)\n",
-		info.Name, len(info.Files), humanizeBytes(info.TotalLength()))
+	// Report torrent name via progress callback (pct < 0 signals "got metadata").
+	if c.cfg.OnProgress != nil {
+		c.cfg.OnProgress(-1, 0, info.TotalLength(), 0, 0, 0)
+	}
 
 	// Progress ticker while waiting for completion.
 	doneCh := t.Complete().On()
@@ -136,6 +152,8 @@ func (c *Client) Download(ctx context.Context, magnetURI, outputDir string) ([]s
 		downloadTimeout = 30 * time.Minute
 	}
 	deadline := time.Now().Add(downloadTimeout)
+	lastBytes := int64(0)
+	lastTick := time.Now()
 
 	for {
 		select {
@@ -146,13 +164,19 @@ func (c *Client) Download(ctx context.Context, magnetURI, outputDir string) ([]s
 			stats := t.Stats()
 			total := t.Length()
 			if total > 0 {
-				pct := float64(stats.BytesRead.Int64()) / float64(total) * 100
-				fmt.Fprintf(os.Stderr, "  Progress: %.1f%% (%s / %s) seeders=%d\n",
-					pct,
-					humanizeBytes(stats.BytesRead.Int64()),
-					humanizeBytes(total),
-					stats.ConnectedSeeders,
-				)
+				downloaded := stats.BytesRead.Int64()
+				pct := float64(downloaded) / float64(total) * 100
+				now := time.Now()
+				elapsed := now.Sub(lastTick).Seconds()
+				speed := 0.0
+				if elapsed > 0 {
+					speed = float64(downloaded-lastBytes) / elapsed
+				}
+				lastBytes = downloaded
+				lastTick = now
+				if c.cfg.OnProgress != nil {
+					c.cfg.OnProgress(pct, downloaded, total, speed, stats.ActivePeers, stats.ConnectedSeeders)
+				}
 			}
 			if time.Now().After(deadline) {
 				t.Drop()
@@ -212,23 +236,4 @@ func copyFile(f *torrent.File, dst string) error {
 	}
 
 	return nil
-}
-
-// humanizeBytes converts bytes to a human-readable string.
-func humanizeBytes(b int64) string {
-	const (
-		kiB = 1024
-		miB = kiB * 1024
-		giB = miB * 1024
-	)
-	switch {
-	case b >= giB:
-		return fmt.Sprintf("%.1f GiB", float64(b)/float64(giB))
-	case b >= miB:
-		return fmt.Sprintf("%.1f MiB", float64(b)/float64(miB))
-	case b >= kiB:
-		return fmt.Sprintf("%.1f KiB", float64(b)/float64(kiB))
-	default:
-		return fmt.Sprintf("%d B", b)
-	}
 }

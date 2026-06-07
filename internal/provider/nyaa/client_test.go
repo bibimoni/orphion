@@ -256,6 +256,53 @@ func TestEpisodesFromCachedSearch(t *testing.T) {
 	}
 }
 
+func TestEpisodesUsesJapaneseNumeralsAndDoesNotPromoteSpecialToEpisodeOne(t *testing.T) {
+	rss := `<?xml version="1.0" encoding="utf-8"?>
+<rss xmlns:nyaa="https://nyaa.si/xmlns/nyaa" version="2.0">
+<channel>
+<item>
+<title>【逃げるは恥だが役に立つ (2021)】 ガンバレ人類! 新春SP!!.mp4</title>
+<link>https://nyaa.si/download/sp.torrent</link>
+<nyaa:infoHash>add312cfb18efee75d8c5067ad66ef4fcb0b5e7d</nyaa:infoHash>
+</item>
+<item>
+<title>逃げるは恥だが役に立つ 第二話/NIGERUHA.HAJIDAGA.YAKUNITATSU.Ep02.mp4</title>
+<link>https://nyaa.si/download/ep2.torrent</link>
+<nyaa:infoHash>b77dc035f2b95579c7f44d77e2fcc8b1d053fd73</nyaa:infoHash>
+</item>
+<item>
+<title>逃げるは恥だが役に立つ 第一話/NIGERUHA.HAJIDAGA.YAKUNITATSU.Ep01.mp4</title>
+<link>https://nyaa.si/download/ep1.torrent</link>
+<nyaa:infoHash>0fe5fdebfd07bb8252f28b583adabdaea8fb2b77</nyaa:infoHash>
+</item>
+</channel>
+</rss>`
+	client := testClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(rss))
+	}))
+
+	results, err := client.Search(context.Background(), "逃げ恥", "drama")
+	if err != nil {
+		t.Fatal(err)
+	}
+	episodes, err := client.Episodes(context.Background(), results[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(episodes) != 2 {
+		t.Fatalf("Episodes() = %d episodes, want 2 parsed episodes", len(episodes))
+	}
+	if episodes[0].ID != "0fe5fdebfd07bb8252f28b583adabdaea8fb2b77:1" {
+		t.Fatalf("episode 1 ID = %q, want actual episode 1 torrent", episodes[0].ID)
+	}
+	if episodes[1].ID != "b77dc035f2b95579c7f44d77e2fcc8b1d053fd73:2" {
+		t.Fatalf("episode 2 ID = %q, want actual episode 2 torrent", episodes[1].ID)
+	}
+	if episodes[0].Title != "逃げるは恥だが役に立つ 第一話/NIGERUHA.HAJIDAGA.YAKUNITATSU.Ep01.mp4" {
+		t.Fatalf("episode 1 title = %q, want source title", episodes[0].Title)
+	}
+}
+
 func TestEpisodesErrorOnEmptyID(t *testing.T) {
 	client := testClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("ok"))
@@ -334,6 +381,19 @@ func TestEpisodesFromTitleBracket(t *testing.T) {
 	}
 }
 
+func TestEpisodesFromTitleJapaneseKanjiEpisode(t *testing.T) {
+	got := EpisodesFromTitle("hash-kanji", "逃げるは恥だが役に立つ 第一話")
+	if len(got) != 1 {
+		t.Fatalf("EpisodesFromTitle() = %d episodes, want 1", len(got))
+	}
+	if got[0].Number != "1" {
+		t.Fatalf("EpisodesFromTitle()[0].Number = %q, want 1", got[0].Number)
+	}
+	if got[0].ID != "hash-kanji:1" {
+		t.Fatalf("EpisodesFromTitle()[0].ID = %q, want hash-kanji:1", got[0].ID)
+	}
+}
+
 func TestEpisodesFromTitleFallback(t *testing.T) {
 	got := EpisodesFromTitle("hash789", "[J-Drama] Some Batch Release")
 	if len(got) != 1 {
@@ -380,6 +440,25 @@ func TestStreamsReturnsMagnet(t *testing.T) {
 	}
 	if !strings.Contains(got[0].URL, "open.stealth.si") {
 		t.Fatalf("Streams()[0].URL missing stealth tracker: %q", got[0].URL)
+	}
+}
+
+func TestStreamsIncludesTorrentFileAsMetadataSource(t *testing.T) {
+	client := testClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(rssSearchResult))
+	}))
+
+	results, err := client.Search(context.Background(), "test drama", "drama")
+	if err != nil {
+		t.Fatal(err)
+	}
+	streams, err := client.Streams(context.Background(), results[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(streams[0].URL, "xs=https%3A%2F%2Fnyaa.si%2Fdownload%2F") {
+		t.Fatalf("magnet missing torrent metadata source: %q", streams[0].URL)
 	}
 }
 
@@ -473,12 +552,15 @@ func TestNewClientUsesInjectedHTTPClient(t *testing.T) {
 // --- Helper Tests ---
 
 func TestBuildMagnetURI(t *testing.T) {
-	got := buildMagnetURI("abc123", []string{"http://tracker.example.com/announce"})
+	got := buildMagnetURI("abc123", []string{"http://tracker.example.com/announce"}, "https://example.com/file.torrent")
 	if !strings.Contains(got, "magnet:?xt=urn:btih:abc123") {
 		t.Fatalf("buildMagnetURI() = %q, want magnet prefix", got)
 	}
 	if !strings.Contains(got, "tracker.example.com") {
 		t.Fatalf("buildMagnetURI() = %q, want tracker included", got)
+	}
+	if !strings.Contains(got, "xs=https%3A%2F%2Fexample.com%2Ffile.torrent") {
+		t.Fatalf("buildMagnetURI() = %q, want xs metadata source", got)
 	}
 }
 

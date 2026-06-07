@@ -26,6 +26,8 @@ type Config struct {
 	PreferredQty  string
 	Force         bool
 	TorrentClient *torrent.Client
+	ProviderName  string
+	Providers     map[string]provider.Provider
 }
 
 // ProgressCallback receives progress updates during a download.
@@ -39,16 +41,27 @@ type Service struct {
 	torrentClient *torrent.Client
 	config        Config
 	progressCb    ProgressCallback
+	providerName  string
+	providers     map[string]provider.Provider
 }
 
 // New creates a new app service.
 func New(p provider.Provider, runner *ffmpeg.Runner, cfg Config) *Service {
+	providers := make(map[string]provider.Provider, len(cfg.Providers))
+	for name, provider := range cfg.Providers {
+		providers[name] = provider
+	}
+	if cfg.ProviderName != "" && p != nil {
+		providers[cfg.ProviderName] = p
+	}
 	return &Service{
 		provider:      p,
 		scheduler:     download.NewScheduler(cfg.Concurrency),
 		runner:        runner,
 		torrentClient: cfg.TorrentClient,
 		config:        cfg,
+		providerName:  cfg.ProviderName,
+		providers:     providers,
 	}
 }
 
@@ -97,6 +110,47 @@ func (s *Service) SetProgressCallback(fn ProgressCallback) {
 	s.progressCb = fn
 }
 
+// SetProvider switches the active content provider by registered name.
+func (s *Service) SetProvider(name string) error {
+	p, ok := s.providers[name]
+	if !ok {
+		return fmt.Errorf("provider %q not found", name)
+	}
+	s.provider = p
+	s.providerName = name
+	return nil
+}
+
+// ProviderName returns the active provider name, if known.
+func (s *Service) ProviderName() string {
+	return s.providerName
+}
+
+// ProviderNames returns the registered provider names in stable UI order.
+func (s *Service) ProviderNames() []string {
+	names := make([]string, 0, len(s.providers))
+	if s.providerName != "" {
+		if _, ok := s.providers[s.providerName]; ok {
+			names = append(names, s.providerName)
+		}
+	}
+	for _, name := range []string{"nyaa", "allanime", "catalog"} {
+		if name == s.providerName {
+			continue
+		}
+		if _, ok := s.providers[name]; ok {
+			names = append(names, name)
+		}
+	}
+	for name := range s.providers {
+		if name == s.providerName || name == "nyaa" || name == "allanime" || name == "catalog" {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
 // DownloadEpisodes downloads selected episodes for a given title ID.
 func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr, title string) (DownloadResult, []download.Result, error) {
 	eps, err := s.provider.Episodes(ctx, animeID)
@@ -123,6 +177,14 @@ func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr, title str
 	if len(selected) == 0 {
 		return DownloadResult{}, nil, fmt.Errorf("no episodes matching %q", expr)
 	}
+	selectedProviderEpisodes := make([]provider.Episode, len(selected))
+	for i, ep := range selected {
+		selectedProviderEpisodes[i] = provider.Episode{
+			ID:      ep.ID,
+			Number:  ep.Number,
+			SortKey: ep.SortKey,
+		}
+	}
 
 	// Detect missing requested episode numbers.
 	reqNums := make(map[string]bool)
@@ -148,6 +210,18 @@ func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr, title str
 		fmt.Fprintf(os.Stderr, "warning: missing episodes: %v\n", missing)
 	}
 
+	return s.downloadEpisodeList(ctx, selectedProviderEpisodes, title, missing)
+}
+
+// DownloadSelectedEpisodes downloads provider episodes selected directly by ID.
+func (s *Service) DownloadSelectedEpisodes(ctx context.Context, selected []provider.Episode, title string) (DownloadResult, []download.Result, error) {
+	if len(selected) == 0 {
+		return DownloadResult{}, nil, fmt.Errorf("no episodes selected")
+	}
+	return s.downloadEpisodeList(ctx, selected, title, nil)
+}
+
+func (s *Service) downloadEpisodeList(ctx context.Context, selected []provider.Episode, title string, missing []string) (DownloadResult, []download.Result, error) {
 	jobs := make([]download.Job, len(selected))
 	for i, ep := range selected {
 		jobs[i] = download.Job{
@@ -258,7 +332,7 @@ func (s *Service) executeJob(ctx context.Context, job download.Job) (string, err
 
 	// Route magnet URIs to the torrent client, everything else to FFmpeg.
 	if strings.HasPrefix(streamURL, "magnet:?") {
-		return s.executeTorrentJob(ctx, streamURL, baseDir, title, outPath)
+		return s.executeTorrentJob(ctx, streamURL, baseDir, title, job.Episode, outPath)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(partPath), 0o755); err != nil {
@@ -293,13 +367,31 @@ func (s *Service) executeJob(ctx context.Context, job download.Job) (string, err
 }
 
 // executeTorrentJob downloads a torrent from a magnet URI.
-func (s *Service) executeTorrentJob(ctx context.Context, magnetURI, baseDir, title, outPath string) (string, error) {
+func (s *Service) executeTorrentJob(ctx context.Context, magnetURI, baseDir, title, episode, outPath string) (string, error) {
 	if s.torrentClient == nil {
 		return "", fmt.Errorf("torrent client not initialized (magnet URI provided but no torrent support)")
 	}
 
 	if err := os.MkdirAll(baseDir, 0o755); err != nil {
 		return "", fmt.Errorf("create output dir: %w", err)
+	}
+
+	// Wire torrent progress into the app's progress callback.
+	if s.progressCb != nil {
+		s.torrentClient.SetOnProgress(func(pct float64, downloaded, total int64, speedBps float64, peers, seeders int) {
+			if pct < 0 {
+				s.progressCb(episode, ffmpeg.Progress{Speed: "metadata", TotalBytes: total})
+				return
+			}
+			speed := humanizeSpeed(speedBps)
+			s.progressCb(episode, ffmpeg.Progress{
+				Bytes:      downloaded,
+				TotalBytes: total,
+				Speed:      speed,
+				Peers:      peers,
+				Seeders:    seeders,
+			})
+		})
 	}
 
 	paths, err := s.torrentClient.Download(ctx, magnetURI, baseDir)
@@ -368,6 +460,26 @@ func parseSortKey(s string) float64 {
 	var val float64
 	_, _ = fmt.Sscanf(s, "%f", &val)
 	return val
+}
+
+// humanizeSpeed converts bytes/sec to a human-readable speed string
+// matching the format used by the FFmpeg progress display (e.g. "2.5 MiB/s").
+func humanizeSpeed(bps float64) string {
+	const (
+		kiB = 1024.0
+		miB = kiB * 1024
+		giB = miB * 1024
+	)
+	switch {
+	case bps >= giB:
+		return fmt.Sprintf("%.1f GiB/s", bps/giB)
+	case bps >= miB:
+		return fmt.Sprintf("%.1f MiB/s", bps/miB)
+	case bps >= kiB:
+		return fmt.Sprintf("%.1f KiB/s", bps/kiB)
+	default:
+		return fmt.Sprintf("%.0f B/s", bps)
+	}
 }
 
 func expandTilde(path string) string {

@@ -170,6 +170,7 @@ func (c *Client) Episodes(ctx context.Context, showID string) ([]provider.Episod
 			}),
 			Number:  number,
 			SortKey: sortKey,
+			Title:   "Episode " + number,
 		})
 	}
 	sort.SliceStable(episodes, func(i, j int) bool {

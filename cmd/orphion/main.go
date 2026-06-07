@@ -36,9 +36,15 @@ func main() {
 		os.Exit(2)
 	}
 
-	contentProvider, err := newProvider(cfg.Provider)
+	providers, err := newProviders()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orphion: provider:", err)
+		os.Exit(2)
+	}
+	providerName := normalizeProviderName(cfg.Provider)
+	contentProvider, ok := providers[providerName]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "orphion: provider: unknown provider %q (available: allanime, nyaa)\n", cfg.Provider)
 		os.Exit(2)
 	}
 
@@ -57,6 +63,8 @@ func main() {
 		Concurrency:   cfg.Concurrency,
 		PreferredQty:  cfg.PreferredQuality,
 		TorrentClient: torrentClient,
+		ProviderName:  providerName,
+		Providers:     providers,
 	}
 	service := app.New(contentProvider, runner, appCfg)
 
@@ -77,6 +85,28 @@ func newProvider(name string) (provider.Provider, error) {
 	default:
 		return nil, fmt.Errorf("unknown provider %q (available: allanime, nyaa)", name)
 	}
+}
+
+func newProviders() (map[string]provider.Provider, error) {
+	allanimeProvider, err := newProvider("allanime")
+	if err != nil {
+		return nil, err
+	}
+	nyaaProvider, err := newProvider("nyaa")
+	if err != nil {
+		return nil, err
+	}
+	return map[string]provider.Provider{
+		"allanime": allanimeProvider,
+		"nyaa":     nyaaProvider,
+	}, nil
+}
+
+func normalizeProviderName(name string) string {
+	if name == "catalog" {
+		return "allanime"
+	}
+	return name
 }
 
 func handleError(ctx context.Context, err error) {

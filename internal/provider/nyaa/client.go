@@ -26,7 +26,7 @@ var episodeRangeRe = regexp.MustCompile(`\((\d+)-(\d+)\)`)
 var singleEpisodeRe = regexp.MustCompile(`(?i)(?:E|EP|ep)\s*(\d+)`)
 
 // japaneseEpRe extracts episode numbers from Japanese patterns like "第一話", "第2話", "最終話".
-var japaneseEpRe = regexp.MustCompile(`第(\d+)話`)
+var japaneseEpRe = regexp.MustCompile(`第([一二三四五六七八九十百千\d]+)話`)
 
 // bracketEpsRe extracts episode numbers from brackets like "[01]", "[02]", "[11]".
 var bracketEpsRe = regexp.MustCompile(`\[(\d{1,3})\]`)
@@ -56,6 +56,7 @@ type rssItem struct {
 type torrentEntry struct {
 	infoHash string
 	title    string
+	link     string
 	seeders  int
 	size     string
 }
@@ -109,6 +110,25 @@ func (c *showCache) ShowIDForEpisode(episodeID string) (string, bool) {
 	}
 	id, ok := c.entries[infoHash]
 	return id, ok
+}
+
+func (c *showCache) TorrentLink(infoHash string) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	showID, ok := c.entries[infoHash]
+	if !ok {
+		return ""
+	}
+	group, ok := c.shows[showID]
+	if !ok {
+		return ""
+	}
+	for _, torrent := range group.torrents {
+		if torrent.infoHash == infoHash {
+			return torrent.link
+		}
+	}
+	return ""
 }
 
 // Client fetches and normalizes Nyaa.si data.
@@ -200,6 +220,7 @@ func (c *Client) Search(ctx context.Context, query, kind string) ([]provider.Ani
 		entries = append(entries, torrentEntry{
 			infoHash: infoHash,
 			title:    title,
+			link:     strings.TrimSpace(item.Link),
 			seeders:  seeders,
 			size:     item.Size,
 		})
@@ -247,16 +268,33 @@ func (c *Client) Episodes(ctx context.Context, animeID string) ([]provider.Episo
 	}
 
 	var episodes []provider.Episode
+	var fallback []provider.Episode
 	epNum := 1
 	for _, t := range group.torrents {
 		parsed := EpisodesFromTitle(t.infoHash, t.title)
+		for i := range parsed {
+			parsed[i].Title = t.title
+			parsed[i].Size = t.size
+			parsed[i].Seeders = t.seeders
+		}
 		if len(parsed) == 1 && parsed[0].Number == "1" {
-			// Couldn't extract episode number — assign sequential.
+			if parsed[0].ID == t.infoHash {
+				fallback = append(fallback, parsed[0])
+				continue
+			}
 			parsed[0].Number = strconv.Itoa(epNum)
 			parsed[0].SortKey = float64(epNum)
 			epNum++
 		}
 		episodes = append(episodes, parsed...)
+	}
+	if len(episodes) == 0 {
+		for _, ep := range fallback {
+			ep.Number = strconv.Itoa(epNum)
+			ep.SortKey = float64(epNum)
+			epNum++
+			episodes = append(episodes, ep)
+		}
 	}
 
 	// If no episodes extracted, return a single batch episode.
@@ -265,6 +303,9 @@ func (c *Client) Episodes(ctx context.Context, animeID string) ([]provider.Episo
 			{ID: animeID, Number: "1", SortKey: 1.0},
 		}
 	}
+	sort.SliceStable(episodes, func(i, j int) bool {
+		return episodes[i].SortKey < episodes[j].SortKey
+	})
 
 	return episodes, nil
 }
@@ -286,7 +327,7 @@ func (c *Client) Streams(ctx context.Context, episodeID string) ([]provider.Stre
 		return nil, fmt.Errorf("nyaa streams: invalid info hash %q", infoHash)
 	}
 
-	magnet := buildMagnetURI(infoHash, c.trackers)
+	magnet := buildMagnetURI(infoHash, c.trackers, c.cache.TorrentLink(infoHash))
 
 	return []provider.Stream{
 		{
@@ -445,6 +486,7 @@ func EpisodesFromTitle(infoHash, title string) []provider.Episode {
 					ID:      fmt.Sprintf("%s:%d", infoHash, i),
 					Number:  strconv.Itoa(i),
 					SortKey: float64(i),
+					Title:   title,
 				})
 			}
 			return episodes
@@ -460,6 +502,7 @@ func EpisodesFromTitle(infoHash, title string) []provider.Episode {
 					ID:      fmt.Sprintf("%s:%d", infoHash, num),
 					Number:  strconv.Itoa(num),
 					SortKey: float64(num),
+					Title:   title,
 				},
 			}
 		}
@@ -467,13 +510,14 @@ func EpisodesFromTitle(infoHash, title string) []provider.Episode {
 
 	// Try Japanese episode marker like "第一話", "第2話"
 	if matches := japaneseEpRe.FindStringSubmatch(title); len(matches) >= 2 {
-		num, err := strconv.Atoi(matches[1])
-		if err == nil {
+		num, ok := parseJapaneseEpisodeNumber(matches[1])
+		if ok {
 			return []provider.Episode{
 				{
 					ID:      fmt.Sprintf("%s:%d", infoHash, num),
 					Number:  strconv.Itoa(num),
 					SortKey: float64(num),
+					Title:   title,
 				},
 			}
 		}
@@ -489,6 +533,7 @@ func EpisodesFromTitle(infoHash, title string) []provider.Episode {
 					ID:      fmt.Sprintf("%s:%d", infoHash, num),
 					Number:  strconv.Itoa(num),
 					SortKey: float64(num),
+					Title:   title,
 				},
 			}
 		}
@@ -496,8 +541,57 @@ func EpisodesFromTitle(infoHash, title string) []provider.Episode {
 
 	// Fallback: single batch episode
 	return []provider.Episode{
-		{ID: infoHash, Number: "1", SortKey: 1.0},
+		{ID: infoHash, Number: "1", SortKey: 1.0, Title: title},
 	}
+}
+
+func parseJapaneseEpisodeNumber(s string) (int, bool) {
+	if n, err := strconv.Atoi(s); err == nil {
+		return n, true
+	}
+	values := map[rune]int{
+		'一': 1,
+		'二': 2,
+		'三': 3,
+		'四': 4,
+		'五': 5,
+		'六': 6,
+		'七': 7,
+		'八': 8,
+		'九': 9,
+	}
+	switch len([]rune(s)) {
+	case 1:
+		n, ok := values[[]rune(s)[0]]
+		return n, ok
+	case 2:
+		runes := []rune(s)
+		if runes[0] == '十' {
+			n := 10
+			if v, ok := values[runes[1]]; ok {
+				n += v
+			}
+			return n, true
+		}
+		if runes[1] == '十' {
+			if v, ok := values[runes[0]]; ok {
+				return v * 10, true
+			}
+		}
+	case 3:
+		runes := []rune(s)
+		if runes[1] == '十' {
+			tens, okTens := values[runes[0]]
+			ones, okOnes := values[runes[2]]
+			if okTens && okOnes {
+				return tens*10 + ones, true
+			}
+		}
+	}
+	if s == "十" {
+		return 10, true
+	}
+	return 0, false
 }
 
 // fetch retrieves raw bytes from a URL with up to 2 retries on transient failures.
@@ -562,10 +656,14 @@ func (c *Client) doFetch(ctx context.Context, rawURL string) ([]byte, error) {
 }
 
 // buildMagnetURI constructs a magnet URI from an info hash and tracker list.
-func buildMagnetURI(infoHash string, trackers []string) string {
+func buildMagnetURI(infoHash string, trackers []string, sourceURL string) string {
 	var sb strings.Builder
 	sb.WriteString("magnet:?xt=urn:btih:")
 	sb.WriteString(infoHash)
+	if sourceURL != "" {
+		sb.WriteString("&xs=")
+		sb.WriteString(url.QueryEscape(sourceURL))
+	}
 	for _, tr := range trackers {
 		sb.WriteString("&tr=")
 		sb.WriteString(url.QueryEscape(tr))
