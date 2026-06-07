@@ -266,7 +266,15 @@ go test -race ./...
 
 # Pre-commit hooks
 brew install pre-commit
+brew install golangci-lint
 pre-commit install
+```
+
+The pre-commit hook runs only golangci-lint against changes relative to
+`HEAD`. Run it manually with:
+
+```bash
+pre-commit run --all-files
 ```
 
 ### Testing
