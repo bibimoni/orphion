@@ -19,7 +19,8 @@
 - `internal/app` - Service layer (orchestration)
 - `internal/cli` - Cobra CLI commands + pterm interactive UI
 - `internal/config` - YAML configuration
-- `internal/provider` - Anime provider interface + allanime impl
+- `internal/provider` - Anime provider interface + allanime + bettermelon impl
+- `internal/provider/bettermelon` - Bettermelon API provider (raw/softsub streams via AniList IDs)
 - `internal/download` - Concurrent download scheduler
 - `internal/ffmpeg` - FFmpeg wrapper for stream download
 - `internal/paths` - Output path generation
@@ -48,3 +49,15 @@
 ## Notes
 - Provider interface pattern: Provider interface + ProviderImpl struct + NewProvider() + client
 - Interactive flow: step-based loop with backOption
+
+## Bettermelon API (Raw Anime Source)
+- Base URL: `https://api.bettermelon.ru`
+- Proxy URL: `https://proxy.bettermelon.ru` (needed for CDN access)
+- Requires AniList numeric IDs (no text search)
+- Endpoints:
+  - `GET /anime/{anilistId}/episodes` — Kitsu-format episode list
+  - `GET /anime/{anilistId}/{episodeNumber}/{provider}` — streaming data
+- Providers: `hianime`, `animekai`, `kickassanime`, `anikoto`
+- Stream type: `SOFT` (raw video + separate VTT subtitle tracks, NOT hardsubbed)
+- Episode ID encoding: base64 JSON `{a: anilistId, e: episodeNumber, p: provider}`
+- Fallback: if primary provider fails, tries others in order

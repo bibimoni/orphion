@@ -77,6 +77,26 @@ const (
 	AllAnimeEpisodeQueryHash = "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec"
 )
 
+// ── Bettermelon Provider ─────────────────────────────────────────────────
+
+const (
+	// BettermelonAPIURL is the Bettermelon API base endpoint.
+	BettermelonAPIURL = "https://api.bettermelon.ru"
+
+	// BettermelonProxyURL is the Bettermelon proxy for CDN access.
+	BettermelonProxyURL = "https://proxy.bettermelon.ru"
+
+	// BettermelonDefaultProvider is the default upstream provider within Bettermelon.
+	BettermelonDefaultProvider = "hianime"
+)
+
+// ── AniList API ──────────────────────────────────────────────────────────
+
+const (
+	// AniListAPIURL is the AniList GraphQL API endpoint used for text-to-ID resolution.
+	AniListAPIURL = "https://graphql.anilist.co"
+)
+
 // ── SubDL Provider ─────────────────────────────────────────────────────
 
 const (

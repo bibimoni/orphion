@@ -15,6 +15,7 @@ import (
 	"github.com/distiled/orphion/internal/ffmpeg"
 	"github.com/distiled/orphion/internal/provider"
 	"github.com/distiled/orphion/internal/provider/allanime"
+	"github.com/distiled/orphion/internal/provider/bettermelon"
 	"github.com/distiled/orphion/internal/subtitle"
 	"github.com/distiled/orphion/internal/subtitle/kitsunekko"
 	"github.com/distiled/orphion/internal/subtitle/subdl"
@@ -104,8 +105,10 @@ func newProvider(name string) (provider.Provider, error) {
 	switch name {
 	case "allanime", "catalog":
 		return allanime.NewProvider(allanime.DefaultConfig())
+	case "bettermelon":
+		return bettermelon.NewProvider(bettermelon.DefaultConfig())
 	default:
-		return nil, fmt.Errorf("unknown provider %q (available: allanime)", name)
+		return nil, fmt.Errorf("unknown provider %q (available: allanime, bettermelon)", name)
 	}
 }
 
@@ -114,8 +117,13 @@ func newProviders() (map[string]provider.Provider, error) {
 	if err != nil {
 		return nil, err
 	}
+	bettermelonProvider, err := newProvider("bettermelon")
+	if err != nil {
+		return nil, err
+	}
 	return map[string]provider.Provider{
-		"allanime": allanimeProvider,
+		"allanime":    allanimeProvider,
+		"bettermelon": bettermelonProvider,
 	}, nil
 }
 
