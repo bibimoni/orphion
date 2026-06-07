@@ -10,6 +10,7 @@ import (
 	"github.com/distiled/orphion/internal/app"
 	"github.com/distiled/orphion/internal/cli"
 	"github.com/distiled/orphion/internal/ffmpeg"
+	"github.com/distiled/orphion/internal/provider/catalog"
 )
 
 func main() {
@@ -19,14 +20,20 @@ func main() {
 	)
 	defer cancel()
 
-	// Build the application service with FFmpeg runner.
-	runner, _ := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	// Build the application service with catalog provider and FFmpeg runner.
+	provider := catalog.NewProvider(catalog.Config{BaseURL: catalog.DefaultBaseURL})
+	runner, err := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "orphion:", err)
+		os.Exit(2)
+	}
+
 	cfg := app.Config{
 		OutputDir:    "~/Anime",
 		Concurrency:  1,
 		PreferredQty: "1080p",
 	}
-	service := app.New(nil, runner, cfg)
+	service := app.New(provider, runner, cfg)
 
 	root := cli.New(service)
 	root.SetContext(ctx)

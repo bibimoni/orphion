@@ -24,8 +24,8 @@ func TitleToDir(title string) string {
 	return title
 }
 
-// sanitizeEpisodeLabel restricts episode label to safe characters.
-func sanitizeEpisodeLabel(label string) string {
+// SanitizeLabel restricts episode label to numeric characters and dots.
+func SanitizeLabel(label string) string {
 	filtered := make([]byte, 0, len(label))
 	for i := 0; i < len(label); i++ {
 		c := label[i]
@@ -41,29 +41,28 @@ func sanitizeEpisodeLabel(label string) string {
 
 // EpisodeFilename returns the filename for a given episode number.
 func EpisodeFilename(number string) string {
-	safe := sanitizeEpisodeLabel(number)
-	if safe != number {
-		return "Episode " + safe + ".mkv"
-	}
-	return "Episode " + number + ".mkv"
+	safe := SanitizeLabel(number)
+	return "Episode " + safe + ".mkv"
 }
 
 // PartialFilename returns the temporary partial filename.
 func PartialFilename(number string) string {
-	return "Episode " + number + ".part.mkv"
+	safe := SanitizeLabel(number)
+	return "Episode " + safe + ".part.mkv"
 }
 
 // OutputLayout builds the full path, sanitizing episode labels.
 func OutputLayout(base, title, number string) string {
 	dir := filepath.Join(base, TitleToDir(title))
-	safe := sanitizeEpisodeLabel(number)
+	safe := SanitizeLabel(number)
 	return filepath.Join(dir, "Episode "+safe+".mkv")
 }
 
 // PartialPath builds the path for a partial download.
 func PartialPath(base, title, number string) string {
 	dir := filepath.Join(base, TitleToDir(title))
-	return filepath.Join(dir, PartialFilename(number))
+	safe := SanitizeLabel(number)
+	return filepath.Join(dir, "Episode "+safe+".part.mkv")
 }
 
 // IsSafe checks that resolved is within base directory.

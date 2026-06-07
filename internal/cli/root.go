@@ -107,6 +107,17 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 				return fmt.Errorf("--episodes is required")
 			}
 
+			// Apply overrides to the actual service config.
+			if outputDir != "" {
+				service.SetOutputDir(outputDir)
+			}
+			if quality != "" {
+				service.SetPreferredQuality(quality)
+			}
+			if concurrency > 0 {
+				service.SetConcurrency(concurrency)
+			}
+
 			id := animeID
 			if id == "" {
 				var err error
@@ -114,19 +125,6 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 				if err != nil {
 					return err
 				}
-			}
-
-			// Apply flags to service config.
-			svcConfig := service.Config()
-			if outputDir != "" {
-				svcConfig.OutputDir = outputDir
-			}
-			if quality != "" {
-				svcConfig.PreferredQty = quality
-			}
-			if concurrency > 0 {
-				svcConfig.Concurrency = concurrency
-				service.SetConcurrency(concurrency)
 			}
 
 			result, _, err := service.DownloadEpisodes(cmd.Context(), id, episodes)

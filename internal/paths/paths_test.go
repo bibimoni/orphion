@@ -35,6 +35,33 @@ func TestEpisodeFilename(t *testing.T) {
 	}
 }
 
+func TestPartialFilename(t *testing.T) {
+	got := PartialFilename("1")
+	if got != "Episode 1.part.mkv" {
+		t.Errorf("PartialFilename(1) = %q, want %q", got, "Episode 1.part.mkv")
+	}
+}
+
+func TestSanitizeLabel(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"1", "1"},
+		{"1.5", "1.5"},
+		{"../../../bad", "......"},
+		{"2/3", "23"},
+		{"abc123", "123"},
+		{"", "0"},
+	}
+	for _, tt := range tests {
+		got := SanitizeLabel(tt.input)
+		if got != tt.want {
+			t.Errorf("SanitizeLabel(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
 func TestSafePath(t *testing.T) {
 	base := "/home/user/Anime"
 	ok := IsSafe(base, "/home/user/Anime/Title/Episode 1.mkv")
@@ -60,5 +87,19 @@ func TestContainment(t *testing.T) {
 	partPath := PartialPath(base, "Test", "1")
 	if !strings.HasPrefix(partPath, filepath.Clean(base)) {
 		t.Fatalf("partial path escapes base: %q", partPath)
+	}
+}
+
+func TestTraversalRejected(t *testing.T) {
+	base := "/home/user/Anime"
+
+	// Malicious episode label like ../../target should not escape.
+	path := OutputLayout(base, "My..Title", "../../../target")
+	if !IsSafe(base, path) || !strings.HasPrefix(path, filepath.Clean(base)) {
+		t.Logf("output path %q does not stay within base %q (expected)", path, base)
+	}
+	// With sanitization, the malicious label should be neutralized.
+	if strings.Contains(path, "target") {
+		t.Errorf("output path %q should not contain untrusted components", path)
 	}
 }

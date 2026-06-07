@@ -1,13 +1,17 @@
 package app
 
+// Import net/http
 import (
 	"context"
 	"fmt"
-	"sync"
+	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/distiled/orphion/internal/download"
 	"github.com/distiled/orphion/internal/episode"
 	"github.com/distiled/orphion/internal/ffmpeg"
+	"github.com/distiled/orphion/internal/paths"
 	"github.com/distiled/orphion/internal/provider"
 	"github.com/distiled/orphion/internal/quality"
 )
@@ -60,8 +64,7 @@ func (s *Service) Search(ctx context.Context, query, kind string) (SearchResult,
 	return SearchResult{Anime: results}, nil
 }
 
-// ResolveID resolves a search query to a single anime ID, or returns
-// an error if the query returns zero or multiple results.
+// ResolveID resolves a search query to a single anime ID.
 func (s *Service) ResolveID(ctx context.Context, query, kind string) (string, error) {
 	results, err := s.provider.Search(ctx, query, kind)
 	if err != nil {
@@ -104,14 +107,14 @@ func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr string) (D
 	}
 
 	// Detect missing requested episode numbers.
-	reqSet := make(map[string]bool)
+	reqNums := make(map[string]bool)
 	for _, seq := range req.Seqs {
 		for n := parseSortKey(seq.Start); n <= parseSortKey(seq.End); n++ {
-			reqSet[fmt.Sprintf("%.2f", n)] = true
+			reqNums[fmt.Sprintf("%.2f", n)] = true
 		}
 	}
 	var missing []string
-	for num := range reqSet {
+	for num := range reqNums {
 		found := false
 		for _, ep := range selected {
 			if fmt.Sprintf("%.2f", ep.SortKey) == num {
@@ -124,10 +127,9 @@ func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr string) (D
 		}
 	}
 	if len(missing) > 0 {
-		fmt.Printf("warning: missing episodes: %v\n", missing)
+		fmt.Fprintf(os.Stderr, "warning: missing episodes: %v\n", missing)
 	}
 
-	var mu sync.Mutex
 	jobs := make([]download.Job, len(selected))
 	for i, ep := range selected {
 		jobs[i] = download.Job{
@@ -137,35 +139,7 @@ func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr string) (D
 	}
 
 	runner := download.RunnerFunc(func(ctx context.Context, job download.Job) error {
-		streams, err := s.provider.Streams(ctx, job.ID)
-		if err != nil {
-			return err
-		}
-		if len(streams) == 0 {
-			return fmt.Errorf("no streams for episode %s", job.Episode)
-		}
-
-		qualityStreams := make([]quality.Stream, len(streams))
-		for j, st := range streams {
-			qualityStreams[j] = quality.Stream{
-				URL:     st.URL,
-				Quality: st.Quality,
-			}
-		}
-		result := quality.Select(s.config.PreferredQty, qualityStreams)
-
-		mu.Lock()
-		defer mu.Unlock()
-
-		if s.runner == nil {
-			fmt.Printf("Episode %s: selected %s\n", job.Episode, result.Stream.Quality)
-			return fmt.Errorf("ffmpeg runner not configured")
-		}
-
-		// Build output paths.
-		outFile := result.Stream.URL // placeholder
-		_ = outFile
-		return fmt.Errorf("FFmpeg execution: download workflow requires provider URL resolution")
+		return s.executeJob(ctx, job)
 	})
 
 	results := s.scheduler.RunAll(ctx, jobs, runner)
@@ -185,9 +159,70 @@ func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr string) (D
 	return dr, results, nil
 }
 
-// GetEpisodes returns episode info for an anime.
-func (s *Service) GetEpisodes(ctx context.Context, animeID string) ([]provider.Episode, error) {
-	return s.provider.Episodes(ctx, animeID)
+func (s *Service) executeJob(ctx context.Context, job download.Job) error {
+	streams, err := s.provider.Streams(ctx, job.ID)
+	if err != nil {
+		return fmt.Errorf("get streams: %w", err)
+	}
+	if len(streams) == 0 {
+		return fmt.Errorf("no streams for episode %s", job.Episode)
+	}
+
+	qualityStreams := make([]quality.Stream, len(streams))
+	for j, st := range streams {
+		qualityStreams[j] = quality.Stream{
+			URL:     st.URL,
+			Quality: st.Quality,
+		}
+	}
+	result := quality.Select(s.config.PreferredQty, qualityStreams)
+
+	// Find matching provider stream for URL and headers.
+	var streamURL string
+	var selectedHeaders http.Header
+	for _, st := range streams {
+		if st.Quality == result.Stream.Quality {
+			streamURL = st.URL
+			selectedHeaders = st.Headers
+			break
+		}
+	}
+
+	baseDir := expandTilde(s.config.OutputDir)
+	title := "Download"
+	epNum := job.Episode
+
+	outPath := paths.OutputLayout(baseDir, title, epNum)
+	partPath := paths.PartialPath(baseDir, title, epNum)
+
+	if err := os.MkdirAll(filepath.Dir(partPath), 0o755); err != nil {
+		return fmt.Errorf("create output dir: %w", err)
+	}
+
+	// Build FFmpeg args for the selected stream.
+	args := s.runner.Args(streamURL, partPath, selectedHeaders.Get("Referer"), selectedHeaders.Get("User-Agent"))
+	if err := s.runner.Execute(ctx, args); err != nil {
+		_ = os.Remove(partPath)
+		return fmt.Errorf("ffmpeg: %w", err)
+	}
+
+	// Atomic rename.
+	if err := os.Rename(partPath, outPath); err != nil {
+		_ = os.Remove(partPath)
+		return fmt.Errorf("rename: %w", err)
+	}
+
+	return nil
+}
+
+// SetOutputDir updates the output directory.
+func (s *Service) SetOutputDir(dir string) {
+	s.config.OutputDir = dir
+}
+
+// SetPreferredQuality updates the preferred quality.
+func (s *Service) SetPreferredQuality(q string) {
+	s.config.PreferredQty = q
 }
 
 // Config returns a copy of the current service config.
@@ -207,8 +242,26 @@ func (s *Service) SetConcurrency(n int) {
 	s.scheduler = download.NewScheduler(n)
 }
 
+// GetEpisodes returns episode info for an anime.
+func (s *Service) GetEpisodes(ctx context.Context, animeID string) ([]provider.Episode, error) {
+	return s.provider.Episodes(ctx, animeID)
+}
+
 func parseSortKey(s string) float64 {
 	var val float64
 	fmt.Sscanf(s, "%f", &val)
 	return val
+}
+
+func expandTilde(path string) string {
+	if path == "" {
+		return path
+	}
+	if path[0] == '~' {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return filepath.Join(home, path[1:])
+		}
+	}
+	return path
 }
