@@ -16,7 +16,7 @@ var Version = "dev"
 func New(service *app.Service) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "orphion",
-		Short: "Download anime and drama episodes",
+		Short: "Download episodes",
 	}
 	setInteractiveRoot(root, service)
 
@@ -59,7 +59,7 @@ func newSearchCmd(service *app.Service) *cobra.Command {
 	var resType string
 	cmd := &cobra.Command{
 		Use:   "search",
-		Short: "Search for anime and drama titles",
+		Short: "Search for titles",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if service == nil {
@@ -93,7 +93,7 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "download",
-		Short: "Download anime episodes",
+		Short: "Download episodes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if service == nil {
 				return fmt.Errorf("service not configured")

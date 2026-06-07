@@ -25,7 +25,7 @@ func runInteractive(cmd *cobra.Command, service *app.Service) error {
 	ctx := cmd.Context()
 
 	// Welcome
-	pterm.DefaultBasicText.Println("Orphion - Anime & Drama Downloader")
+	pterm.DefaultBasicText.Println("Orphion")
 	pterm.DefaultBasicText.Println("")
 
 	// Step 1: Search text
