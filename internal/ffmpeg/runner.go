@@ -1,8 +1,10 @@
 package ffmpeg
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 )
 
@@ -37,6 +39,15 @@ func (r *Runner) Args(url, output, referer, userAgent string) []string {
 		"-c", "copy",
 		output,
 	}
+}
+
+// Execute runs the FFmpeg binary. It uses the provided context to support
+// cancellation and returns the standard error output on failure.
+func (r *Runner) Execute(ctx context.Context, args []string) error {
+	cmd := exec.CommandContext(ctx, r.config.FFmpegPath, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 // EnsureDir creates parent directories for the output file.

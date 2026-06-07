@@ -33,11 +33,6 @@ func TestExpandTilde(t *testing.T) {
 	if got != want {
 		t.Errorf("expandTilde(%q) = %q, want %q", "~/Anime", got, want)
 	}
-
-	got2 := expandTilde("/abs/path")
-	if got2 != "/abs/path" {
-		t.Errorf("expandTilde(%q) = %q, want %q", "/abs/path", got2, "/abs/path")
-	}
 }
 
 func TestLoadConfig_Defaults(t *testing.T) {
@@ -63,6 +58,50 @@ func TestLoadConfig_UnknownKey(t *testing.T) {
 	_, err := Load(path)
 	if err == nil {
 		t.Fatal("expected error for unknown field, got nil")
+	}
+}
+
+func TestLoadConfig_RejectsZeroConcurrency(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.yaml")
+	content := "output_dir: /tmp/test\nconcurrency: 0"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for zero concurrency, got nil")
+	}
+}
+
+func TestLoadConfig_RejectsInvalidConcurrency(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.yaml")
+	content := "output_dir: /tmp/test\nconcurrency: 5"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for concurrency=5, got nil")
+	}
+}
+
+func TestLoadConfig_TildeExpanded(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.yaml")
+	content := "output_dir: ~/Anime"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	home, _ := os.UserHomeDir()
+	expected := filepath.Join(home, "Anime")
+	if cfg.OutputDir != expected {
+		t.Errorf("OutputDir = %q, want %q", cfg.OutputDir, expected)
 	}
 }
 

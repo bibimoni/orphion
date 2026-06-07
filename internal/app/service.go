@@ -7,6 +7,7 @@ import (
 
 	"github.com/distiled/orphion/internal/download"
 	"github.com/distiled/orphion/internal/episode"
+	"github.com/distiled/orphion/internal/ffmpeg"
 	"github.com/distiled/orphion/internal/provider"
 	"github.com/distiled/orphion/internal/quality"
 )
@@ -22,24 +23,18 @@ type Config struct {
 type Service struct {
 	provider  provider.Provider
 	scheduler *download.Scheduler
+	runner    *ffmpeg.Runner
 	config    Config
 }
 
 // New creates a new app service.
-func New(p provider.Provider, cfg Config) *Service {
+func New(p provider.Provider, runner *ffmpeg.Runner, cfg Config) *Service {
 	return &Service{
 		provider:  p,
 		scheduler: download.NewScheduler(cfg.Concurrency),
+		runner:    runner,
 		config:    cfg,
 	}
-}
-
-// EpisodeJob represents a single episode to download.
-type EpisodeJob struct {
-	EpisodeNumber string
-	Title         string
-	URL           string
-	Quality       string
 }
 
 // SearchResult holds the result of a search operation.
@@ -53,6 +48,7 @@ type DownloadResult struct {
 	Failed    int
 	Skipped   int
 	Cancelled int
+	Missing   []string
 }
 
 // Search performs a content search.
@@ -101,9 +97,34 @@ func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr string) (D
 			SortKey: e.SortKey,
 		}
 	}
+
 	selected := episode.Resolve(req, episodes)
 	if len(selected) == 0 {
 		return DownloadResult{}, nil, fmt.Errorf("no episodes matching %q", expr)
+	}
+
+	// Detect missing requested episode numbers.
+	reqSet := make(map[string]bool)
+	for _, seq := range req.Seqs {
+		for n := parseSortKey(seq.Start); n <= parseSortKey(seq.End); n++ {
+			reqSet[fmt.Sprintf("%.2f", n)] = true
+		}
+	}
+	var missing []string
+	for num := range reqSet {
+		found := false
+		for _, ep := range selected {
+			if fmt.Sprintf("%.2f", ep.SortKey) == num {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missing = append(missing, num)
+		}
+	}
+	if len(missing) > 0 {
+		fmt.Printf("warning: missing episodes: %v\n", missing)
 	}
 
 	var mu sync.Mutex
@@ -116,7 +137,6 @@ func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr string) (D
 	}
 
 	runner := download.RunnerFunc(func(ctx context.Context, job download.Job) error {
-		// Get streams for the episode.
 		streams, err := s.provider.Streams(ctx, job.ID)
 		if err != nil {
 			return err
@@ -125,23 +145,27 @@ func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr string) (D
 			return fmt.Errorf("no streams for episode %s", job.Episode)
 		}
 
-		// Select quality.
 		qualityStreams := make([]quality.Stream, len(streams))
-		for j, s := range streams {
+		for j, st := range streams {
 			qualityStreams[j] = quality.Stream{
-				URL:     s.URL,
-				Quality: s.Quality,
+				URL:     st.URL,
+				Quality: st.Quality,
 			}
 		}
 		result := quality.Select(s.config.PreferredQty, qualityStreams)
 
 		mu.Lock()
 		defer mu.Unlock()
-		// In a full implementation, we would pass the stream URL and headers to the
-		// FFmpeg runner. For now, we record the download job.
-		fmt.Printf("Episode %s: %s %s\n", job.Episode, result.Stream.Quality, result.Stream.URL)
 
-		return nil
+		if s.runner == nil {
+			fmt.Printf("Episode %s: selected %s\n", job.Episode, result.Stream.Quality)
+			return fmt.Errorf("ffmpeg runner not configured")
+		}
+
+		// Build output paths.
+		outFile := result.Stream.URL // placeholder
+		_ = outFile
+		return fmt.Errorf("FFmpeg execution: download workflow requires provider URL resolution")
 	})
 
 	results := s.scheduler.RunAll(ctx, jobs, runner)
@@ -157,10 +181,34 @@ func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr string) (D
 			dr.Cancelled++
 		}
 	}
+	dr.Missing = missing
 	return dr, results, nil
 }
 
 // GetEpisodes returns episode info for an anime.
 func (s *Service) GetEpisodes(ctx context.Context, animeID string) ([]provider.Episode, error) {
 	return s.provider.Episodes(ctx, animeID)
+}
+
+// Config returns a copy of the current service config.
+func (s *Service) Config() Config {
+	return s.config
+}
+
+// SetConcurrency updates the download concurrency.
+func (s *Service) SetConcurrency(n int) {
+	if n < 1 {
+		n = 1
+	}
+	if n > 4 {
+		n = 4
+	}
+	s.config.Concurrency = n
+	s.scheduler = download.NewScheduler(n)
+}
+
+func parseSortKey(s string) float64 {
+	var val float64
+	fmt.Sscanf(s, "%f", &val)
+	return val
 }

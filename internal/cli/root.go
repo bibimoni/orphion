@@ -56,7 +56,8 @@ func newConfigCmd() *cobra.Command {
 }
 
 func newSearchCmd(service *app.Service) *cobra.Command {
-	return &cobra.Command{
+	var resType string
+	cmd := &cobra.Command{
 		Use:   "search",
 		Short: "Search for anime and drama titles",
 		Args:  cobra.MinimumNArgs(1),
@@ -64,7 +65,7 @@ func newSearchCmd(service *app.Service) *cobra.Command {
 			if service == nil {
 				return fmt.Errorf("service not configured")
 			}
-			result, err := service.Search(cmd.Context(), args[0], "")
+			result, err := service.Search(cmd.Context(), args[0], resType)
 			if err != nil {
 				return err
 			}
@@ -74,14 +75,19 @@ func newSearchCmd(service *app.Service) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&resType, "type", "anime", "Content type: anime or drama")
+	return cmd
 }
 
 func newDownloadCmd(service *app.Service) *cobra.Command {
 	var (
-		episodes string
-		title    string
-		animeID  string
-		resType  string
+		episodes    string
+		title       string
+		animeID     string
+		resType     string
+		quality     string
+		outputDir   string
+		concurrency int
 	)
 
 	cmd := &cobra.Command{
@@ -110,13 +116,26 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 				}
 			}
 
+			// Apply flags to service config.
+			svcConfig := service.Config()
+			if outputDir != "" {
+				svcConfig.OutputDir = outputDir
+			}
+			if quality != "" {
+				svcConfig.PreferredQty = quality
+			}
+			if concurrency > 0 {
+				svcConfig.Concurrency = concurrency
+				service.SetConcurrency(concurrency)
+			}
+
 			result, _, err := service.DownloadEpisodes(cmd.Context(), id, episodes)
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "completed %d, failed %d\n", result.Completed, result.Failed)
+			fmt.Fprintf(cmd.OutOrStdout(), "%d completed, %d failed\n", result.Completed, result.Failed)
 			if result.Failed > 0 {
-				return fmt.Errorf("some downloads failed")
+				return &ExitError{code: 1, msg: "some downloads failed"}
 			}
 			return nil
 		},
@@ -126,6 +145,9 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 	cmd.Flags().StringVar(&title, "title", "", "Search query")
 	cmd.Flags().StringVar(&animeID, "title-id", "", "Anime ID")
 	cmd.Flags().StringVar(&resType, "type", "anime", "Content type: anime or drama")
+	cmd.Flags().StringVar(&quality, "quality", "", "Preferred quality (e.g. 1080p)")
+	cmd.Flags().StringVar(&outputDir, "output", "", "Output directory")
+	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "Download concurrency (1-4)")
 
 	return cmd
 }

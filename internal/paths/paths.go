@@ -1,13 +1,11 @@
 package paths
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 )
 
 // TitleToDir returns a sanitized directory name for an anime title.
-// Removes path separators, control characters, and trailing dots/spaces.
 func TitleToDir(title string) string {
 	const invalid = `<>:"/\|?*` + "\x00"
 	for _, c := range invalid {
@@ -26,33 +24,53 @@ func TitleToDir(title string) string {
 	return title
 }
 
+// sanitizeEpisodeLabel restricts episode label to safe characters.
+func sanitizeEpisodeLabel(label string) string {
+	filtered := make([]byte, 0, len(label))
+	for i := 0; i < len(label); i++ {
+		c := label[i]
+		if (c >= '0' && c <= '9') || c == '.' {
+			filtered = append(filtered, c)
+		}
+	}
+	if len(filtered) == 0 {
+		return "0"
+	}
+	return string(filtered)
+}
+
 // EpisodeFilename returns the filename for a given episode number.
 func EpisodeFilename(number string) string {
-	return fmt.Sprintf("Episode %s.mkv", number)
+	safe := sanitizeEpisodeLabel(number)
+	if safe != number {
+		return "Episode " + safe + ".mkv"
+	}
+	return "Episode " + number + ".mkv"
 }
 
-// PartialFilename returns the temporary partial filename for a given episode.
+// PartialFilename returns the temporary partial filename.
 func PartialFilename(number string) string {
-	return fmt.Sprintf("Episode %s.part.mkv", number)
+	return "Episode " + number + ".part.mkv"
 }
 
-// OutputLayout returns the full path for the final episode file.
+// OutputLayout builds the full path, sanitizing episode labels.
 func OutputLayout(base, title, number string) string {
 	dir := filepath.Join(base, TitleToDir(title))
-	return filepath.Join(dir, EpisodeFilename(number))
+	safe := sanitizeEpisodeLabel(number)
+	return filepath.Join(dir, "Episode "+safe+".mkv")
 }
 
-// PartialPath returns the path for an in-progress download file.
+// PartialPath builds the path for a partial download.
 func PartialPath(base, title, number string) string {
 	dir := filepath.Join(base, TitleToDir(title))
 	return filepath.Join(dir, PartialFilename(number))
 }
 
-// IsSafe checks that a resolved path is within the base directory.
+// IsSafe checks that resolved is within base directory.
 func IsSafe(base, resolved string) bool {
 	rel, err := filepath.Rel(base, resolved)
 	if err != nil {
 		return false
 	}
-	return !strings.HasPrefix(rel, "..")
+	return !strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel)
 }

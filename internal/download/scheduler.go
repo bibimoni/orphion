@@ -2,7 +2,6 @@ package download
 
 import (
 	"context"
-	"fmt"
 	"sync"
 )
 
@@ -10,7 +9,7 @@ import (
 type Status int
 
 const (
-	StatusPending Status = iota
+	StatusPending   Status = iota
 	StatusRunning
 	StatusCompleted
 	StatusFailed
@@ -34,6 +33,19 @@ type Result struct {
 	Err    error
 }
 
+// Runner executes a single job.
+type Runner interface {
+	Run(ctx context.Context, job Job) error
+}
+
+// RunnerFunc is an adapter for running jobs.
+type RunnerFunc func(ctx context.Context, job Job) error
+
+// Run calls rf(ctx, job).
+func (rf RunnerFunc) Run(ctx context.Context, job Job) error {
+	return rf(ctx, job)
+}
+
 // Scheduler manages concurrent download jobs.
 type Scheduler struct {
 	concurrency int
@@ -50,48 +62,44 @@ func NewScheduler(concurrency int) *Scheduler {
 	return &Scheduler{concurrency: concurrency}
 }
 
-// Runner executes a single job.
-type Runner interface {
-	Run(ctx context.Context, job Job) error
-}
-
-// RunnerFunc is an adapter for running jobs.
-type RunnerFunc func(ctx context.Context, job Job) error
-
-// Run calls rf(ctx, job).
-func (rf RunnerFunc) Run(ctx context.Context, job Job) error {
-	return rf(ctx, job)
-}
-
 // RunAll executes all jobs, limiting concurrency. On context cancellation,
-// it stops scheduling new jobs and returns partial results.
+// it stops scheduling new jobs but waits for started jobs to complete.
 func (s *Scheduler) RunAll(ctx context.Context, jobs []Job, runner Runner) []Result {
 	var (
-		mu   sync.Mutex
-		wg   sync.WaitGroup
-		sem  = make(chan struct{}, s.concurrency)
-		done = make(chan struct{})
+		mu      sync.Mutex
+		wg      sync.WaitGroup
+		sem     = make(chan struct{}, s.concurrency)
+		cancelled bool
 	)
 
 	results := make([]Result, len(jobs))
 
 	for i := range jobs {
+		mu.Lock()
+		if cancelled {
+			mu.Unlock()
+			results[i] = Result{JobID: jobs[i].ID, Status: StatusCancelled}
+			continue
+		}
+		mu.Unlock()
+
+		// Block until a slot is available.
 		select {
+		case sem <- struct{}{}:
 		case <-ctx.Done():
-			for j := i; j < len(jobs); j++ {
-				results[j] = Result{JobID: jobs[j].ID, Status: StatusCancelled}
-			}
-			return results
-		default:
+			mu.Lock()
+			cancelled = true
+			mu.Unlock()
+			results[i] = Result{JobID: jobs[i].ID, Status: StatusCancelled}
+			continue
 		}
 
 		wg.Add(1)
 		go func(j Job, idx int) {
 			defer wg.Done()
-
-			sem <- struct{}{}
 			defer func() { <-sem }()
 
+			// Check for cancellation before starting.
 			select {
 			case <-ctx.Done():
 				mu.Lock()
@@ -116,7 +124,8 @@ func (s *Scheduler) RunAll(ctx context.Context, jobs []Job, runner Runner) []Res
 		}(jobs[i], i)
 	}
 
-	// Close done channel when all goroutines finish.
+	// Start a goroutine that waits for all jobs, then closes done.
+	done := make(chan struct{})
 	go func() {
 		wg.Wait()
 		close(done)
@@ -127,42 +136,15 @@ func (s *Scheduler) RunAll(ctx context.Context, jobs []Job, runner Runner) []Res
 }
 
 // AggregateExitCode returns the exit code for a set of results.
-// 0 = full success + skips, 1 = some failures, 2 = all cancelled.
 func AggregateExitCode(results []Result) int {
 	hasFailure := false
-	hasSuccess := false
 	for _, r := range results {
-		if r.Status == StatusCompleted || r.Status == StatusSkipped {
-			hasSuccess = true
-		}
 		if r.Status == StatusFailed {
 			hasFailure = true
 		}
-	}
-	if hasFailure && !hasSuccess {
-		return 1
 	}
 	if hasFailure {
 		return 1
 	}
 	return 0
-}
-
-// Summary returns a text summary of results.
-func Summary(results []Result) string {
-	var completed, failed, cancelled, skipped int
-	for _, r := range results {
-		switch r.Status {
-		case StatusCompleted:
-			completed++
-		case StatusFailed:
-			failed++
-		case StatusCancelled:
-			cancelled++
-		case StatusSkipped:
-			skipped++
-		}
-	}
-	return fmt.Sprintf("completed %d, failed %d, skipped %d, cancelled %d",
-		completed, failed, skipped, cancelled)
 }

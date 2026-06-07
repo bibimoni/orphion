@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/distiled/orphion/internal/ffmpeg"
 	"github.com/distiled/orphion/internal/provider"
 )
 
@@ -36,13 +37,18 @@ func (p *fakeProvider) Streams(ctx context.Context, episodeID string) ([]provide
 	return p.streams, nil
 }
 
+func newTestService(fp *fakeProvider) *Service {
+	r, _ := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	return New(fp, r, Config{Concurrency: 1, PreferredQty: "1080p"})
+}
+
 func TestService_Search(t *testing.T) {
 	fp := &fakeProvider{
 		searches: []provider.Anime{
 			{ID: "test", Title: "Frieren"},
 		},
 	}
-	svc := New(fp, Config{Concurrency: 1, PreferredQty: "1080p"})
+	svc := newTestService(fp)
 	result, err := svc.Search(context.Background(), "frieren", "anime")
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +64,7 @@ func TestService_ResolveID(t *testing.T) {
 			{ID: "ep1", Title: "Frieren"},
 		},
 	}
-	svc := New(fp, Config{Concurrency: 1})
+	svc := newTestService(fp)
 	id, err := svc.ResolveID(context.Background(), "frieren", "anime")
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +101,7 @@ func TestService_DownloadEpisodes(t *testing.T) {
 			{URL: "https://example.com/1080.m3u8", Quality: "1080p"},
 		},
 	}
-	svc := New(fp, Config{Concurrency: 1, PreferredQty: "1080p"})
+	svc := newTestService(fp)
 	ctx := context.Background()
 
 	result, raw, err := svc.DownloadEpisodes(ctx, "anime-id", "1-2")
@@ -110,7 +116,7 @@ func TestService_DownloadEpisodes(t *testing.T) {
 
 func TestService_ErrorPropagation(t *testing.T) {
 	fp := &fakeProvider{err: errors.New("provider error")}
-	svc := New(fp, Config{Concurrency: 1})
+	svc := newTestService(fp)
 
 	_, err := svc.Search(context.Background(), "test", "anime")
 	if err == nil {
