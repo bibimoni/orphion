@@ -5,6 +5,7 @@ set -euo pipefail
 TITLE="${ORPHION_LIVE_TITLE:-Shirokuma Cafe}"
 EPISODE="${ORPHION_LIVE_EPISODE:-1}"
 PROBE_SECONDS="${ORPHION_PROBE_SECONDS:-15}"
+PROVIDER="${ORPHION_LIVE_PROVIDER:-catalog}"
 ORPHION_BIN="${ORPHION_BIN:-orphion}"
 FFMPEG_BIN="${FFMPEG_BIN:-ffmpeg}"
 FFPROBE_BIN="${FFPROBE_BIN:-ffprobe}"
@@ -46,7 +47,7 @@ write_config() {
         printf 'output_dir: %s\n' "$output_dir"
         printf 'preferred_quality: 1080p\n'
         printf 'concurrency: 1\n'
-        printf 'provider: catalog\n'
+        printf 'provider: %s\n' "$PROVIDER"
         printf 'ffmpeg_path: %s\n' "$ffmpeg_path"
     } >"$home_dir/.config/orphion/config.yaml"
 }
