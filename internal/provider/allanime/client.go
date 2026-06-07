@@ -294,7 +294,11 @@ func (c *Client) doGraphQL(req *http.Request, out any) error {
 		return fmt.Errorf("decode response: %w", err)
 	}
 	if len(envelope.Errors) > 0 {
-		return errors.New("upstream GraphQL error")
+		msgs := make([]string, 0, len(envelope.Errors))
+		for _, e := range envelope.Errors {
+			msgs = append(msgs, fmt.Sprintf("%q", e.Message))
+		}
+		return fmt.Errorf("upstream GraphQL returned errors: %s", strings.Join(msgs, ", "))
 	}
 	if len(envelope.Data) == 0 || string(envelope.Data) == "null" {
 		if err := json.Unmarshal(body, out); err != nil {
