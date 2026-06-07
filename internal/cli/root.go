@@ -16,7 +16,11 @@ var Version = "dev"
 func New(service *app.Service) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "orphion",
-		Short: "Download episodes",
+		Short: "Search and download episodes",
+		Long: `Orphion searches a catalog provider for content and downloads
+selected episodes as MKV files through system FFmpeg.
+
+Run without arguments to start interactive mode.`,
 	}
 	setInteractiveRoot(root, service)
 
@@ -70,7 +74,7 @@ func newSearchCmd(service *app.Service) *cobra.Command {
 				return err
 			}
 			for _, a := range result.Anime {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", a.ID, a.Title)
+				fmt.Fprintf(cmd.OutOrStdout(), "  %s\t%s\n", a.ID, a.Title)
 			}
 			return nil
 		},
@@ -142,7 +146,7 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 
 	cmd.Flags().StringVar(&episodes, "episodes", "", "Episode expression (e.g. 1-4,7)")
 	cmd.Flags().StringVar(&title, "title", "", "Search query")
-	cmd.Flags().StringVar(&animeID, "title-id", "", "Anime ID")
+	cmd.Flags().StringVar(&animeID, "title-id", "", "Content ID")
 	cmd.Flags().StringVar(&resType, "type", "", "Content type: anime, drama, or empty for both")
 	cmd.Flags().StringVar(&quality, "quality", "", "Preferred quality (e.g. 1080p)")
 	cmd.Flags().StringVar(&outputDir, "output", "", "Output directory")

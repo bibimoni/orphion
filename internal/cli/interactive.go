@@ -25,8 +25,7 @@ func runInteractive(cmd *cobra.Command, service *app.Service) error {
 	ctx := cmd.Context()
 
 	// Welcome
-	pterm.DefaultBasicText.Println("Orphion")
-	pterm.DefaultBasicText.Println("")
+	pterm.DefaultBasicText.Println("Orphion – Search and download episodes")
 
 	// Step 1: Search text
 	query, err := pterm.DefaultInteractiveTextInput.WithDefaultText("Search: ").Show()
@@ -65,7 +64,7 @@ func runInteractive(cmd *cobra.Command, service *app.Service) error {
 	}
 	selectedTitle, err := pterm.DefaultInteractiveSelect.
 		WithOptions(opts).
-		WithDefaultText("Select anime:").
+		WithDefaultText("Select title:").
 		Show()
 	if err != nil {
 		return fmt.Errorf("title selection: %w", err)
