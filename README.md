@@ -38,9 +38,6 @@ and drama content, then downloads selected episodes as MKV
 files. It supports interactive prompts and non-interactive
 command-line flags backed by the same application services.
 
-**Phase 1 scope:** Command-line downloader only. No web server,
-database, Docker, playback, subtitles, or account management.
-
 <!-- GETTING STARTED -->
 ## Getting Started
 
@@ -109,7 +106,7 @@ You can also create it explicitly:
 orphion config init
 ```
 
-Flags override configuration values:
+When using orphion, use can use flags to override configuration values:
 
 ```bash
 orphion download --output /Volumes/Media --quality 720p --concurrency 2 --episodes "1-4"
@@ -162,71 +159,6 @@ all           All episodes
 ```
 
 Downloads use `.part.mkv` during transfer and rename to `.mkv` only on success.
-
-### Exit Codes
-
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 1 | One or more downloads failed |
-| 2 | Usage/configuration error |
-| 3 | Provider/search/selection error |
-| 130 | Interrupted |
-
-_For detailed documentation, see [docs/usage.md](docs/usage.md)._
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-<!-- ROADMAP -->
-## Roadmap
-
-- [x] Interactive and non-interactive CLI
-- [x] Anime and drama search
-- [x] Episode selection with quality fallback
-- [x] Configurable download concurrency
-- [x] Partial-file cleanup on failure
-- [x] YAML configuration
-- [x] Zero-config first run (auto-creates config)
-- [x] Animated TUI with spinners, colors, and progress
-- [x] Live download progress with speed and size stats
-- [x] Piped output detection (machine-readable for scripts)
-- [ ] Subtitle support
-- [ ] Download resume
-
-See the [implementation plan](docs/implementation-plan.md) for details.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-<!-- ARCHITECTURE -->
-## Architecture
-
-```
-CLI input
-   |
-   v
-command layer
-   |
-   +--> configuration
-   +--> interactive prompts
-   +--> non-interactive validation
-   |
-   v
-application services
-   |
-   +--> provider interface
-   |      |
-   |      +--> allanime adapter
-   |
-   +--> episode selection
-   +--> quality selection
-   +--> path generation
-   +--> download scheduler
-          |
-          +--> FFmpeg process runner (with progress)
-```
-
-All commands use shared application services. Provider-specific
-details are isolated inside `internal/provider/allanime`.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
