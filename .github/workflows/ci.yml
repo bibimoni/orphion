@@ -103,3 +103,21 @@ jobs:
           ORPHION_LIVE_EPISODE: "1"
           ORPHION_PROBE_SECONDS: "15"
         run: bash scripts/live-download-check.sh
+
+  live-bettermelon:
+    name: Live Bettermelon Provider
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ".go-version"
+          cache: true
+
+      - name: Run live Bettermelon provider test
+        env:
+          ORPHION_LIVE_PROVIDER_TEST: "1"
+        run: go test -race -count=1 -v -timeout 60s ./internal/provider/bettermelon/

@@ -147,7 +147,7 @@ func (s *Service) ProviderNames() []string {
 			names = append(names, s.providerName)
 		}
 	}
-	for _, name := range []string{"allanime", "catalog"} {
+	for _, name := range []string{"allanime", "catalog", "bettermelon"} {
 		if name == s.providerName {
 			continue
 		}
@@ -156,7 +156,7 @@ func (s *Service) ProviderNames() []string {
 		}
 	}
 	for name := range s.providers {
-		if name == s.providerName || name == "allanime" || name == "catalog" {
+		if name == s.providerName || name == "allanime" || name == "catalog" || name == "bettermelon" {
 			continue
 		}
 		names = append(names, name)
