@@ -5,3 +5,5 @@ clipboard-*.png
 dist/
 coverage/
 *.test
+orphion
+dist/

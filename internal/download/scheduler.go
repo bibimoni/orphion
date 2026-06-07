@@ -10,7 +10,7 @@ import (
 type Status int
 
 const (
-	StatusPending   Status = iota
+	StatusPending Status = iota
 	StatusRunning
 	StatusCompleted
 	StatusFailed
@@ -20,11 +20,11 @@ const (
 
 // Job represents a single download job.
 type Job struct {
-	ID     string
+	ID      string
 	Episode string
-	URL    string
-	Status Status
-	Err    error
+	URL     string
+	Status  Status
+	Err     error
 }
 
 // Result holds the outcome of a single download.
@@ -67,10 +67,10 @@ func (rf RunnerFunc) Run(ctx context.Context, job Job) error {
 // it stops scheduling new jobs and returns partial results.
 func (s *Scheduler) RunAll(ctx context.Context, jobs []Job, runner Runner) []Result {
 	var (
-		mu    sync.Mutex
-		wg    sync.WaitGroup
-		sem   = make(chan struct{}, s.concurrency)
-		done  = make(chan struct{})
+		mu   sync.Mutex
+		wg   sync.WaitGroup
+		sem  = make(chan struct{}, s.concurrency)
+		done = make(chan struct{})
 	)
 
 	results := make([]Result, len(jobs))

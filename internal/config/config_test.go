@@ -114,7 +114,9 @@ func TestConcurrencyValidation(t *testing.T) {
 	}
 }
 
-func contains(s, sub string) bool { return len(s) >= len(sub) && (s[:len(sub)] == sub || containsAfter(s, sub)) }
+func contains(s, sub string) bool {
+	return len(s) >= len(sub) && (s[:len(sub)] == sub || containsAfter(s, sub))
+}
 func containsAfter(s, sub string) bool {
 	for i := 1; i <= len(s)-len(sub); i++ {
 		if s[i:i+len(sub)] == sub {

@@ -15,7 +15,7 @@ type Stream struct {
 type Reason int
 
 const (
-	ReasonExact    Reason = iota
+	ReasonExact Reason = iota
 	ReasonLower
 	ReasonLowest
 	ReasonProvider
@@ -35,9 +35,9 @@ func Select(preferred string, streams []Stream) Result {
 	target := parseQuality(preferred)
 
 	var (
-		best    Stream
-		bestQ   float64 = -1
-		reason  Reason
+		best   Stream
+		bestQ  float64 = -1
+		reason Reason
 	)
 
 	// Find exact match first.

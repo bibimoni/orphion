@@ -127,13 +127,13 @@ func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr string) (D
 
 		// Select quality.
 		qualityStreams := make([]quality.Stream, len(streams))
-			for j, s := range streams {
-				qualityStreams[j] = quality.Stream{
-					URL:     s.URL,
-					Quality: s.Quality,
-				}
+		for j, s := range streams {
+			qualityStreams[j] = quality.Stream{
+				URL:     s.URL,
+				Quality: s.Quality,
 			}
-			result := quality.Select(s.config.PreferredQty, qualityStreams)
+		}
+		result := quality.Select(s.config.PreferredQty, qualityStreams)
 
 		mu.Lock()
 		defer mu.Unlock()

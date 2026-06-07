@@ -18,6 +18,7 @@ func New(service *app.Service) *cobra.Command {
 		Use:   "orphion",
 		Short: "Download anime and drama episodes",
 	}
+	setInteractiveRoot(root, service)
 
 	root.AddCommand(newVersionCmd())
 	root.AddCommand(newConfigCmd())
