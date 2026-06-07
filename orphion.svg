@@ -1,11 +1,20 @@
 <?xml version="1.0" standalone="no"?>
 <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 20010904//EN"
  "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">
+ <defs>
+  <linearGradient id="orphionColor" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%" stop-color="#D59A55"/>
+    <stop offset="32%" stop-color="#B97734"/>
+    <stop offset="55%" stop-color="#E8DCC8"/>
+    <stop offset="76%" stop-color="#E8BE58"/>
+    <stop offset="100%" stop-color="#C77A22"/>
+  </linearGradient>
+</defs>
 <svg version="1.0" xmlns="http://www.w3.org/2000/svg"
  width="600.000000pt" height="600.000000pt" viewBox="0 0 600.000000 600.000000"
  preserveAspectRatio="xMidYMid meet">
 <g transform="translate(0.000000,600.000000) scale(0.100000,-0.100000)"
-fill="#000000" stroke="none">
+fill="url(#orphionColor)" stroke="none">
 <path d="M2825 5380 c-1057 -89 -1911 -919 -2061 -2005 -19 -142 -22 -447 -5
 -578 57 -433 211 -811 462 -1132 91 -117 281 -308 393 -396 365 -286 810 -462
 1251 -494 l80 -6 -41 19 c-22 11 -69 37 -105 59 -42 27 -81 43 -114 47 -63 8
