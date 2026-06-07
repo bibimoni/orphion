@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/mattn/go-runewidth"
 	"github.com/pterm/pterm"
 	"github.com/pterm/pterm/putils"
 	"github.com/spf13/cobra"
@@ -29,7 +30,8 @@ var interactiveMultiSelect = func(options []string, defaultText string) ([]strin
 	return pterm.DefaultInteractiveMultiselect.
 		WithOptions(options).
 		WithDefaultText(defaultText).
-		WithShowSelectedOptions().
+		WithCheckmark(&pterm.Checkmark{Checked: pterm.Green("✓"), Unchecked: " "}).
+		WithMaxHeight(8).
 		Show()
 }
 
@@ -199,7 +201,42 @@ func episodeOption(ep provider.Episode) string {
 	if ep.Title != "" {
 		parts = append(parts, ep.Title)
 	}
-	return strings.Join(parts, " | ")
+	return truncateDisplay(strings.Join(parts, " | "), episodeOptionWidth())
+}
+
+func episodeOptionWidth() int {
+	width := pterm.GetTerminalWidth()
+	if width <= 0 {
+		width = 80
+	}
+	// Reserve space for pterm's selector, checkbox, and margin.
+	width -= 8
+	if width < 32 {
+		return 32
+	}
+	return width
+}
+
+func truncateDisplay(s string, maxWidth int) string {
+	if maxWidth <= 0 || runewidth.StringWidth(s) <= maxWidth {
+		return s
+	}
+	const suffix = "..."
+	limit := maxWidth - runewidth.StringWidth(suffix)
+	if limit <= 0 {
+		return suffix
+	}
+	var b strings.Builder
+	width := 0
+	for _, r := range s {
+		rw := runewidth.RuneWidth(r)
+		if width+rw > limit {
+			break
+		}
+		b.WriteRune(r)
+		width += rw
+	}
+	return strings.TrimRight(b.String(), " |") + suffix
 }
 
 func selectInteractiveProvider(service *app.Service) error {
