@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -23,11 +24,24 @@ func main() {
 	)
 	defer cancel()
 
-	// Load configuration from the default path, falling back to defaults on
-	// missing file. Missing files are OK; parse errors are fatal.
 	cfgPath := defaultConfigPath()
+
+	// Check if this command can run without a config file.
+	// Commands like "config init" and "version" don't need one.
+	if !configNeeded(os.Args[1:]) {
+		runWithoutConfig(ctx, cfgPath)
+		return
+	}
+
+	// Load configuration. The config file is required — all runtime
+	// values come from the file, not from hardcoded defaults.
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
+		if errors.Is(err, config.ErrConfigRequired) {
+			fmt.Fprintln(os.Stderr, "orphion: configuration file not found.")
+			fmt.Fprintf(os.Stderr, "Run `orphion config init` to create one at %s\n", cfgPath)
+			os.Exit(2)
+		}
 		fmt.Fprintln(os.Stderr, "orphion: config:", err)
 		os.Exit(2)
 	}
@@ -37,11 +51,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "orphion: provider:", err)
 		os.Exit(2)
 	}
-	ffmpegPath := cfg.FFmpegPath
-	if ffmpegPath == "" {
-		ffmpegPath = "ffmpeg"
-	}
-	runner, err := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: ffmpegPath})
+
+	runner, err := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: cfg.FFmpegPath})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orphion:", err)
 		os.Exit(2)
@@ -58,17 +69,56 @@ func main() {
 	root.SetContext(ctx)
 
 	if err := root.Execute(); err != nil {
-		if ctx.Err() != nil {
-			fmt.Fprintln(os.Stderr, "orphion:", err)
-			os.Exit(130)
-		}
-		if e, ok := err.(*cli.ExitError); ok {
-			fmt.Fprintln(os.Stderr, "orphion:", err)
-			os.Exit(e.Code())
-		}
-		fmt.Fprintln(os.Stderr, "orphion:", err)
-		os.Exit(classifyError(err))
+		handleError(ctx, err)
 	}
+}
+
+// runWithoutConfig runs commands that don't require a config file
+// (config init, version) using a nil service.
+func runWithoutConfig(ctx context.Context, cfgPath string) {
+	root := cli.New(nil)
+	root.SetContext(ctx)
+
+	// Override the config init path to use the resolved default.
+	cli.SetConfigInitPath(cfgPath)
+
+	if err := root.Execute(); err != nil {
+		handleError(ctx, err)
+	}
+}
+
+// configNeeded returns true if the given args require a config file.
+// Commands like "config init" and "version" can run without one.
+func configNeeded(args []string) bool {
+	if len(args) == 0 {
+		// Root command (interactive mode) needs config.
+		return false // Will be caught by service being nil
+	}
+
+	switch args[0] {
+	case "config":
+		// "config init" doesn't need config, but "config" alone is invalid.
+		return false
+	case "version":
+		return false
+	case "help":
+		return false
+	default:
+		return true
+	}
+}
+
+func handleError(ctx context.Context, err error) {
+	if ctx.Err() != nil {
+		fmt.Fprintln(os.Stderr, "orphion:", err)
+		os.Exit(130)
+	}
+	if e, ok := err.(*cli.ExitError); ok {
+		fmt.Fprintln(os.Stderr, "orphion:", err)
+		os.Exit(e.Code())
+	}
+	fmt.Fprintln(os.Stderr, "orphion:", err)
+	os.Exit(classifyError(err))
 }
 
 func defaultConfigPath() string {

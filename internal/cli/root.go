@@ -13,6 +13,15 @@ import (
 // Version is set at build time.
 var Version = "dev"
 
+// configInitPath is the path used by "config init". Overridden by main
+// when the config path is resolved before service initialization.
+var configInitPath string
+
+// SetConfigInitPath sets the path used by "orphion config init".
+func SetConfigInitPath(p string) {
+	configInitPath = p
+}
+
 // New creates the root command for Orphion.
 func New(service *app.Service) *cobra.Command {
 	root := &cobra.Command{
@@ -53,7 +62,10 @@ func newConfigCmd() *cobra.Command {
 		Use:   "init",
 		Short: "Create default configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path := fmt.Sprintf("%s/.config/orphion/config.yaml", os.Getenv("HOME"))
+			path := configInitPath
+			if path == "" {
+				path = fmt.Sprintf("%s/.config/orphion/config.yaml", os.Getenv("HOME"))
+			}
 			return config.Init(path)
 		},
 	})

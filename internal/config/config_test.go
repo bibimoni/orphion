@@ -1,15 +1,16 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestDefaults(t *testing.T) {
+func TestSetDefaults(t *testing.T) {
 	cfg := &Config{}
-	cfg.SetDefaults()
+	SetDefaults(cfg)
 	if cfg.OutputDir != "~/Anime" {
 		t.Errorf("default output_dir = %q, want %q", cfg.OutputDir, "~/Anime")
 	}
@@ -27,6 +28,32 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
+func TestSetDefaultsDoesNotOverwrite(t *testing.T) {
+	cfg := &Config{
+		OutputDir:        "/custom/path",
+		PreferredQuality: "720p",
+		Concurrency:      3,
+		Provider:         "custom",
+		FFmpegPath:       "/usr/local/bin/ffmpeg",
+	}
+	SetDefaults(cfg)
+	if cfg.OutputDir != "/custom/path" {
+		t.Errorf("OutputDir overwritten: got %q", cfg.OutputDir)
+	}
+	if cfg.PreferredQuality != "720p" {
+		t.Errorf("PreferredQuality overwritten: got %q", cfg.PreferredQuality)
+	}
+	if cfg.Concurrency != 3 {
+		t.Errorf("Concurrency overwritten: got %d", cfg.Concurrency)
+	}
+	if cfg.Provider != "custom" {
+		t.Errorf("Provider overwritten: got %q", cfg.Provider)
+	}
+	if cfg.FFmpegPath != "/usr/local/bin/ffmpeg" {
+		t.Errorf("FFmpegPath overwritten: got %q", cfg.FFmpegPath)
+	}
+}
+
 func TestExpandTilde(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	got := expandTilde("~/Anime")
@@ -36,20 +63,17 @@ func TestExpandTilde(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_Defaults(t *testing.T) {
-	cfg, err := Load("nonexistent.yaml")
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+func TestLoadConfigMissingFile(t *testing.T) {
+	_, err := Load("nonexistent.yaml")
+	if err == nil {
+		t.Fatal("expected error for missing config file")
 	}
-	if cfg.OutputDir != "~/Anime" {
-		t.Errorf("OutputDir = %q, want %q", cfg.OutputDir, "~/Anime")
-	}
-	if cfg.Concurrency != 1 {
-		t.Errorf("Concurrency = %d, want 1", cfg.Concurrency)
+	if !errors.Is(err, ErrConfigRequired) {
+		t.Errorf("error = %v, want ErrConfigRequired", err)
 	}
 }
 
-func TestLoadConfig_UnknownKey(t *testing.T) {
+func TestLoadConfigUnknownKey(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "config.yaml")
 	content := "unknown_field: xyz\noutput_dir: /tmp/test"
@@ -62,7 +86,7 @@ func TestLoadConfig_UnknownKey(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_RejectsZeroConcurrency(t *testing.T) {
+func TestLoadConfigRejectsZeroConcurrency(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "config.yaml")
 	content := "output_dir: /tmp/test\nconcurrency: 0"
@@ -75,7 +99,7 @@ func TestLoadConfig_RejectsZeroConcurrency(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_RejectsInvalidConcurrency(t *testing.T) {
+func TestLoadConfigRejectsInvalidConcurrency(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "config.yaml")
 	content := "output_dir: /tmp/test\nconcurrency: 5"
@@ -88,7 +112,7 @@ func TestLoadConfig_RejectsInvalidConcurrency(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_TildeExpanded(t *testing.T) {
+func TestLoadConfigTildeExpanded(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "config.yaml")
 	content := "output_dir: ~/Anime"
@@ -106,7 +130,36 @@ func TestLoadConfig_TildeExpanded(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_RejectsOverwrite(t *testing.T) {
+func TestLoadConfigAppliesDefaultsForOmittedFields(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.yaml")
+	// Only specify output_dir; all other fields should get defaults.
+	content := "output_dir: /tmp/test"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.OutputDir != "/tmp/test" {
+		t.Errorf("OutputDir = %q, want %q", cfg.OutputDir, "/tmp/test")
+	}
+	if cfg.PreferredQuality != "1080p" {
+		t.Errorf("PreferredQuality = %q, want %q", cfg.PreferredQuality, "1080p")
+	}
+	if cfg.Concurrency != 1 {
+		t.Errorf("Concurrency = %d, want 1", cfg.Concurrency)
+	}
+	if cfg.Provider != "catalog" {
+		t.Errorf("Provider = %q, want %q", cfg.Provider, "catalog")
+	}
+	if cfg.FFmpegPath != "ffmpeg" {
+		t.Errorf("FFmpegPath = %q, want %q", cfg.FFmpegPath, "ffmpeg")
+	}
+}
+
+func TestLoadConfigRejectsOverwrite(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "config.yaml")
 	content := "output_dir: /tmp/test"
@@ -133,6 +186,9 @@ func TestConfigInit(t *testing.T) {
 	got := string(data)
 	if !contains(got, "output_dir") {
 		t.Error("init config missing output_dir")
+	}
+	if !contains(got, "ffmpeg_path") {
+		t.Error("init config missing ffmpeg_path")
 	}
 }
 

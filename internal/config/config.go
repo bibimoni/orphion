@@ -20,44 +20,33 @@ type Config struct {
 	concurrencyExplicit bool
 }
 
-// SetDefaults populates missing fields with defaults.
-// Only fills fields that are not explicitly set from YAML.
-func (c *Config) SetDefaults() {
-	if c.OutputDir == "" {
-		c.OutputDir = "~/Anime"
-	}
-	if c.PreferredQuality == "" {
-		c.PreferredQuality = "1080p"
-	}
-	if !c.concurrencyExplicit && c.Concurrency == 0 {
-		c.Concurrency = 1
-	}
-	if c.Provider == "" {
-		c.Provider = "catalog"
-	}
-	if c.FFmpegPath == "" {
-		c.FFmpegPath = "ffmpeg"
-	}
-}
-
-func (c *Config) validate() error {
-	if c.Concurrency < 1 || c.Concurrency > 4 {
-		return fmt.Errorf("concurrency must be between 1 and 4, got %d", c.Concurrency)
-	}
-	return nil
-}
-
-func validateConcurrency(n int) error {
-	if n < 1 || n > 4 {
-		return fmt.Errorf("concurrency must be 1-4, got %d", n)
-	}
-	return nil
-}
+// ErrConfigRequired is returned when the configuration file does not exist.
+var ErrConfigRequired = fmt.Errorf("configuration file not found; run `orphion config init` to create one")
 
 // ErrConfigExists is returned when a configuration file already exists.
 var ErrConfigExists = fmt.Errorf("configuration file already exists")
 
-// raw is used for YAML decoding without default application side-effects.
+// SetDefaults fills missing fields with the canonical defaults.
+// This is the single source of truth for all default values.
+func SetDefaults(cfg *Config) {
+	if cfg.OutputDir == "" {
+		cfg.OutputDir = "~/Anime"
+	}
+	if cfg.PreferredQuality == "" {
+		cfg.PreferredQuality = "1080p"
+	}
+	if cfg.Concurrency == 0 {
+		cfg.Concurrency = 1
+	}
+	if cfg.Provider == "" {
+		cfg.Provider = "catalog"
+	}
+	if cfg.FFmpegPath == "" {
+		cfg.FFmpegPath = "ffmpeg"
+	}
+}
+
+// raw is used for YAML decoding to track which fields were explicitly set.
 type raw struct {
 	OutputDir        *string `yaml:"output_dir"`
 	PreferredQuality *string `yaml:"preferred_quality"`
@@ -66,21 +55,19 @@ type raw struct {
 	FFmpegPath       *string `yaml:"ffmpeg_path"`
 }
 
-// Load reads and validates a configuration YAML file. Missing files are
-// silently treated as empty configuration. Unknown fields are rejected.
+// Load reads and validates a configuration YAML file.
+// Returns ErrConfigRequired if the file does not exist.
+// Unknown fields are rejected.
 func Load(path string) (*Config, error) {
-	cfg := &Config{}
-
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			cfg.SetDefaults()
-			return cfg, nil
+			return nil, ErrConfigRequired
 		}
 		return nil, fmt.Errorf("read config %s: %w", path, err)
 	}
 
-	// First pass: strict decode into raw to detect unknown fields
+	// Strict decode to detect unknown fields.
 	rawCfg := &raw{}
 	dec := yaml.NewDecoder(strings.NewReader(string(data)))
 	dec.KnownFields(true)
@@ -88,7 +75,8 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("decode config %s: %w", path, err)
 	}
 
-	// Map raw -> Config, tracking which fields were explicitly set.
+	// Map raw -> Config. Apply defaults only for fields omitted from YAML.
+	cfg := &Config{}
 	if rawCfg.OutputDir != nil {
 		cfg.OutputDir = expandTilde(*rawCfg.OutputDir)
 	} else {
@@ -102,8 +90,9 @@ func Load(path string) (*Config, error) {
 	if rawCfg.Concurrency != nil {
 		cfg.Concurrency = *rawCfg.Concurrency
 		cfg.concurrencyExplicit = true
+	} else {
+		cfg.Concurrency = 1
 	}
-	cfg.SetDefaults()
 	if rawCfg.Provider != nil {
 		cfg.Provider = *rawCfg.Provider
 	} else {
@@ -121,6 +110,26 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
+func (c *Config) validate() error {
+	if c.Concurrency < 1 || c.Concurrency > 4 {
+		return fmt.Errorf("concurrency must be between 1 and 4, got %d", c.Concurrency)
+	}
+	if c.OutputDir == "" {
+		return fmt.Errorf("output_dir is required")
+	}
+	if c.FFmpegPath == "" {
+		return fmt.Errorf("ffmpeg_path is required")
+	}
+	return nil
+}
+
+func validateConcurrency(n int) error {
+	if n < 1 || n > 4 {
+		return fmt.Errorf("concurrency must be 1-4, got %d", n)
+	}
+	return nil
+}
+
 // Init creates a default configuration file at the given path. It creates
 // parent directories as needed and refuses to overwrite an existing file.
 func Init(path string) error {
@@ -129,7 +138,7 @@ func Init(path string) error {
 	}
 
 	cfg := Config{}
-	SetRawDefaults(&cfg)
+	SetDefaults(&cfg)
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
@@ -144,15 +153,6 @@ func Init(path string) error {
 		return fmt.Errorf("write config %s: %w", path, err)
 	}
 	return nil
-}
-
-// SetRawDefaults fills the config with raw defaults suitable for marshaling.
-func SetRawDefaults(cfg *Config) {
-	cfg.OutputDir = "~/Anime"
-	cfg.PreferredQuality = "1080p"
-	cfg.Concurrency = 1
-	cfg.Provider = "catalog"
-	cfg.FFmpegPath = "ffmpeg"
 }
 
 // expandTilde replaces a leading ~ with the user's home directory.
