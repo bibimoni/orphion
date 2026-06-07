@@ -1,0 +1,31 @@
+#!/bin/zsh
+# Fake FFmpeg for testing.
+# Usage: fake-ffmpeg --mode <success|failure|long> [output_path]
+
+mode="${1#--mode=}"
+if [ "$mode" = "--help" ] || [ "$mode" = "-version" ]; then
+  echo "ffmpeg version fake"
+  exit 0
+fi
+
+case "$mode" in
+  success)
+    # Write a minimal file and exit 0
+    out="${@: -1}"
+    echo "fake content" > "$out"
+    exit 0
+    ;;
+  failure)
+    echo "fake error" >&2
+    exit 1
+    ;;
+  long)
+    out="${@: -1}"
+    sleep 3600 &
+    wait $!
+    ;;
+  *)
+    echo "Fake FFmpeg wrapper"
+    exit 0
+    ;;
+esac
