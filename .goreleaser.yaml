@@ -1,0 +1,45 @@
+version: 2
+
+project_name: orphion
+
+builds:
+  - id: orphion
+    main: ./cmd/orphion
+    binary: orphion
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/distiled/orphion/internal/cli.Version={{.Tag}}
+
+archives:
+  - id: orphion
+    ids:
+      - orphion
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  draft: false
+  prerelease: false
+  mode: keep-existing
