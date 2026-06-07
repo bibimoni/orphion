@@ -164,19 +164,41 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 				return fmt.Errorf("--episodes is required")
 			}
 
-			// Apply overrides to the actual service config.
+			// Apply CLI flag overrides to the session config.
+			sessCfg := &sessionConfig{
+				OutputDir:   service.Config().OutputDir,
+				Quality:     service.Config().PreferredQty,
+				Concurrency: service.Config().Concurrency,
+				Force:       false,
+			}
 			if outputDir != "" {
-				service.SetOutputDir(outputDir)
+				sessCfg.OutputDir = outputDir
 			}
 			if quality != "" {
-				service.SetPreferredQuality(quality)
+				sessCfg.Quality = quality
 			}
 			if concurrency > 0 {
-				service.SetConcurrency(concurrency)
+				sessCfg.Concurrency = concurrency
 			}
 			if force {
-				service.SetForce(true)
+				sessCfg.Force = true
 			}
+
+			// In interactive terminals, show config and offer to edit.
+			// Non-interactive (piped) skips the prompt.
+			if isTerminal(os.Stdout) && !allFlagsSet(cmd, []string{"output", "quality", "concurrency", "force"}) {
+				edited, err := showConfigAndEdit(&config.Config{
+					OutputDir:        sessCfg.OutputDir,
+					PreferredQuality: sessCfg.Quality,
+					Concurrency:      sessCfg.Concurrency,
+				})
+				if err != nil {
+					return fmt.Errorf("session config: %w", err)
+				}
+				sessCfg = edited
+			}
+
+			applySessionConfig(service, sessCfg)
 
 			// Resolve title to ID if needed.
 			if animeID == "" {
@@ -287,4 +309,16 @@ func outputDirFor(filePath string) string {
 		return filePath[:idx]
 	}
 	return filePath
+}
+
+// allFlagsSet reports whether all of the named flags were explicitly set
+// on the command line. Used to skip the interactive config prompt when
+// the user has provided all overrides via flags.
+func allFlagsSet(cmd *cobra.Command, names []string) bool {
+	for _, name := range names {
+		if !cmd.Flags().Changed(name) {
+			return false
+		}
+	}
+	return true
 }

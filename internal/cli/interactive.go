@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/distiled/orphion/internal/app"
+	"github.com/distiled/orphion/internal/config"
 )
 
 // setInteractiveRoot configures the root command for interactive mode when
@@ -89,7 +90,19 @@ func runInteractive(cmd *cobra.Command, service *app.Service) error {
 		return fmt.Errorf("episode input: %w", err)
 	}
 
-	// Step 6: Download with animated progress
+	// Step 6: Review/edit session config before downloading.
+	cfg := service.Config()
+	sessCfg, err := showConfigAndEdit(&config.Config{
+		OutputDir:        cfg.OutputDir,
+		PreferredQuality: cfg.PreferredQty,
+		Concurrency:      cfg.Concurrency,
+	})
+	if err != nil {
+		return fmt.Errorf("session config: %w", err)
+	}
+	applySessionConfig(service, sessCfg)
+
+	// Step 7: Download with animated progress
 	dlSpinner, _ := pterm.DefaultSpinner.Start("Getting episodes...")
 	service.SetProgressCallback(newProgressCallback(dlSpinner))
 
