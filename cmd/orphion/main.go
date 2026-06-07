@@ -13,7 +13,9 @@ import (
 	"github.com/distiled/orphion/internal/cli"
 	"github.com/distiled/orphion/internal/config"
 	"github.com/distiled/orphion/internal/ffmpeg"
+	"github.com/distiled/orphion/internal/provider"
 	"github.com/distiled/orphion/internal/provider/allanime"
+	"github.com/distiled/orphion/internal/provider/dramacool"
 )
 
 func main() {
@@ -33,7 +35,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	contentProvider, err := allanime.NewProvider(allanime.DefaultConfig())
+	contentProvider, err := newProvider(cfg.Provider, cfg.ProviderAPIKey)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orphion: provider:", err)
 		os.Exit(2)
@@ -57,6 +59,19 @@ func main() {
 
 	if err := root.Execute(); err != nil {
 		handleError(ctx, err)
+	}
+}
+
+func newProvider(name, apiKey string) (provider.Provider, error) {
+	switch name {
+	case "allanime", "catalog":
+		return allanime.NewProvider(allanime.DefaultConfig())
+	case "dramacool":
+		cfg := dramacool.DefaultConfig()
+		cfg.APIKey = apiKey
+		return dramacool.NewProvider(cfg)
+	default:
+		return nil, fmt.Errorf("unknown provider %q (available: allanime, dramacool)", name)
 	}
 }
 
