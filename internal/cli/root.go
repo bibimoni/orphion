@@ -90,6 +90,19 @@ func newSearchCmd(service *app.Service) *cobra.Command {
 			}
 			resType = strings.TrimSpace(resType)
 
+			// When stdout is not a terminal (piped), output machine-readable
+			// tab-separated format for scripting. Otherwise, show a rich TUI.
+			if !isTerminal(os.Stdout) {
+				result, err := service.Search(cmd.Context(), args[0], resType)
+				if err != nil {
+					return err
+				}
+				for _, a := range result.Anime {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", a.ID, a.Title)
+				}
+				return nil
+			}
+
 			spinner, _ := pterm.DefaultSpinner.Start(fmt.Sprintf("Searching for %q...", args[0]))
 			result, err := service.Search(cmd.Context(), args[0], resType)
 			if err != nil {
@@ -242,6 +255,15 @@ func formatBytes(b int64) string {
 	default:
 		return fmt.Sprintf("%d B", b)
 	}
+}
+
+// isTerminal reports whether f is a terminal (character device).
+func isTerminal(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }
 
 // outputDirFor extracts the directory portion of a file path.

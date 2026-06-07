@@ -5,10 +5,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/distiled/orphion/internal/app"
 	"github.com/pterm/pterm"
 	"github.com/pterm/pterm/putils"
 	"github.com/spf13/cobra"
+
+	"github.com/distiled/orphion/internal/app"
 )
 
 // setInteractiveRoot configures the root command for interactive mode when
