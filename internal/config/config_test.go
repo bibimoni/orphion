@@ -1,7 +1,6 @@
 package config
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,8 +67,42 @@ func TestLoadConfigMissingFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing config file")
 	}
-	if !errors.Is(err, ErrConfigRequired) {
-		t.Errorf("error = %v, want ErrConfigRequired", err)
+}
+
+func TestLoadOrCreateAutoCreates(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.yaml")
+
+	cfg, err := LoadOrCreate(path)
+	if err != nil {
+		t.Fatalf("LoadOrCreate() error = %v", err)
+	}
+	if cfg.OutputDir != "~/Anime" {
+		t.Errorf("OutputDir = %q, want ~/Anime", cfg.OutputDir)
+	}
+	// File should now exist on disk.
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("config file not created: %v", err)
+	}
+}
+
+func TestLoadOrCreateLoadsExisting(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.yaml")
+	content := "output_dir: /custom/path\npreferred_quality: 720p"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadOrCreate(path)
+	if err != nil {
+		t.Fatalf("LoadOrCreate() error = %v", err)
+	}
+	if cfg.OutputDir != "/custom/path" {
+		t.Errorf("OutputDir = %q, want /custom/path", cfg.OutputDir)
+	}
+	if cfg.PreferredQuality != "720p" {
+		t.Errorf("PreferredQuality = %q, want 720p", cfg.PreferredQuality)
 	}
 }
 

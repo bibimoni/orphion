@@ -29,9 +29,10 @@ type Job struct {
 
 // Result holds the outcome of a single download.
 type Result struct {
-	JobID  string
-	Status Status
-	Err    error
+	JobID      string
+	Status     Status
+	Err        error
+	OutputPath string
 }
 
 // Runner executes a single job.

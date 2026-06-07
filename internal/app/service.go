@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/distiled/orphion/internal/download"
 	"github.com/distiled/orphion/internal/episode"
@@ -23,12 +24,16 @@ type Config struct {
 	Force        bool
 }
 
+// ProgressCallback receives progress updates during a download.
+type ProgressCallback func(episode string, progress ffmpeg.Progress)
+
 // Service orchestrates content lookup and download.
 type Service struct {
-	provider  provider.Provider
-	scheduler *download.Scheduler
-	runner    *ffmpeg.Runner
-	config    Config
+	provider   provider.Provider
+	scheduler  *download.Scheduler
+	runner     *ffmpeg.Runner
+	config     Config
+	progressCb ProgressCallback
 }
 
 // New creates a new app service.
@@ -53,6 +58,7 @@ type DownloadResult struct {
 	Skipped   int
 	Cancelled int
 	Missing   []string
+	Outputs   []string // Output file paths for completed downloads
 }
 
 // Search performs a content search.
@@ -77,6 +83,11 @@ func (s *Service) ResolveID(ctx context.Context, query, kind string) (string, er
 		return "", fmt.Errorf("ambiguous search for %s %q: %d results", kind, query, len(results))
 	}
 	return results[0].ID, nil
+}
+
+// SetProgressCallback sets the callback invoked with download progress updates.
+func (s *Service) SetProgressCallback(fn ProgressCallback) {
+	s.progressCb = fn
 }
 
 // DownloadEpisodes downloads selected episodes for a given title ID.
@@ -139,17 +150,40 @@ func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr, title str
 		}
 	}
 
+	// Track output paths across concurrent downloads.
+	var outputMu sync.Mutex
+	outputPaths := make(map[string]string)
+
 	runner := download.RunnerFunc(func(ctx context.Context, job download.Job) error {
-		return s.executeJob(ctx, job)
+		outPath, err := s.executeJob(ctx, job)
+		if err != nil {
+			return err
+		}
+		if outPath != "" {
+			outputMu.Lock()
+			outputPaths[job.ID] = outPath
+			outputMu.Unlock()
+		}
+		return nil
 	})
 
 	results := s.scheduler.RunAll(ctx, jobs, runner)
+
+	// Populate output paths into results.
+	for i := range results {
+		if p, ok := outputPaths[results[i].JobID]; ok {
+			results[i].OutputPath = p
+		}
+	}
 
 	var dr DownloadResult
 	for _, r := range results {
 		switch r.Status {
 		case download.StatusCompleted:
 			dr.Completed++
+			if r.OutputPath != "" {
+				dr.Outputs = append(dr.Outputs, r.OutputPath)
+			}
 		case download.StatusFailed:
 			dr.Failed++
 		case download.StatusCancelled:
@@ -160,13 +194,13 @@ func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr, title str
 	return dr, results, nil
 }
 
-func (s *Service) executeJob(ctx context.Context, job download.Job) error {
+func (s *Service) executeJob(ctx context.Context, job download.Job) (string, error) {
 	streams, err := s.provider.Streams(ctx, job.ID)
 	if err != nil {
-		return fmt.Errorf("get streams: %w", err)
+		return "", fmt.Errorf("get streams: %w", err)
 	}
 	if len(streams) == 0 {
-		return fmt.Errorf("no streams for episode %s", job.Episode)
+		return "", fmt.Errorf("no streams for episode %s", job.Episode)
 	}
 
 	qualityStreams := make([]quality.Stream, len(streams))
@@ -201,28 +235,39 @@ func (s *Service) executeJob(ctx context.Context, job download.Job) error {
 	// Skip if final file already exists, unless forced.
 	if !s.config.Force {
 		if _, err := os.Stat(outPath); err == nil {
-			return nil
+			return outPath, nil
 		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(partPath), 0o755); err != nil {
-		return fmt.Errorf("create output dir: %w", err)
+		return "", fmt.Errorf("create output dir: %w", err)
 	}
 
 	// Build FFmpeg args for the selected stream.
-	args := s.runner.Args(streamURL, partPath, selectedHeaders.Get("Referer"), selectedHeaders.Get("User-Agent"))
-	if err := s.runner.Execute(ctx, args); err != nil {
-		_ = os.Remove(partPath)
-		return fmt.Errorf("ffmpeg: %w", err)
+	if s.progressCb != nil {
+		args := s.runner.ProgressArgs(streamURL, partPath, selectedHeaders.Get("Referer"), selectedHeaders.Get("User-Agent"))
+		progressFn := func(p ffmpeg.Progress) {
+			s.progressCb(job.Episode, p)
+		}
+		if err := s.runner.ExecuteWithProgress(ctx, args, progressFn); err != nil {
+			_ = os.Remove(partPath)
+			return "", fmt.Errorf("ffmpeg: %w", err)
+		}
+	} else {
+		args := s.runner.Args(streamURL, partPath, selectedHeaders.Get("Referer"), selectedHeaders.Get("User-Agent"))
+		if err := s.runner.Execute(ctx, args); err != nil {
+			_ = os.Remove(partPath)
+			return "", fmt.Errorf("ffmpeg: %w", err)
+		}
 	}
 
 	// Atomic rename.
 	if err := os.Rename(partPath, outPath); err != nil {
 		_ = os.Remove(partPath)
-		return fmt.Errorf("rename: %w", err)
+		return "", fmt.Errorf("rename: %w", err)
 	}
 
-	return nil
+	return outPath, nil
 }
 
 // SetOutputDir updates the output directory.
@@ -260,6 +305,11 @@ func (s *Service) GetEpisodes(ctx context.Context, animeID string) ([]provider.E
 // SetForce enables or disables force overwrite of existing files.
 func (s *Service) SetForce(v bool) {
 	s.config.Force = v
+}
+
+// OutputDir returns the configured output directory.
+func (s *Service) OutputDir() string {
+	return expandTilde(s.config.OutputDir)
 }
 
 func parseSortKey(s string) float64 {
