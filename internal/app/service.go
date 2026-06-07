@@ -7,14 +7,19 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
+	"github.com/pterm/pterm"
+
+	"github.com/distiled/orphion/internal/common"
 	"github.com/distiled/orphion/internal/download"
 	"github.com/distiled/orphion/internal/episode"
 	"github.com/distiled/orphion/internal/ffmpeg"
 	"github.com/distiled/orphion/internal/paths"
 	"github.com/distiled/orphion/internal/provider"
 	"github.com/distiled/orphion/internal/quality"
+	"github.com/distiled/orphion/internal/subtitle"
 )
 
 // Config holds application service configuration.
@@ -25,6 +30,8 @@ type Config struct {
 	Force        bool
 	ProviderName string
 	Providers    map[string]provider.Provider
+	SubtitleLang string
+	SubtitleSrc  subtitle.Provider
 }
 
 // ProgressCallback receives progress updates during a download.
@@ -43,6 +50,7 @@ type Service struct {
 	completedCb  CompletedCallback
 	providerName string
 	providers    map[string]provider.Provider
+	subtitleSrc  subtitle.Provider
 }
 
 // New creates a new app service.
@@ -61,6 +69,7 @@ func New(p provider.Provider, runner *ffmpeg.Runner, cfg Config) *Service {
 		config:       cfg,
 		providerName: cfg.ProviderName,
 		providers:    providers,
+		subtitleSrc:  cfg.SubtitleSrc,
 	}
 }
 
@@ -318,7 +327,7 @@ func (s *Service) executeJob(ctx context.Context, job download.Job) (string, err
 		}
 	}
 
-	baseDir := expandTilde(s.config.OutputDir)
+	baseDir := paths.ExpandTilde(s.config.OutputDir)
 	title := job.Title
 	if title == "" {
 		title = "Download"
@@ -409,24 +418,104 @@ func (s *Service) SetForce(v bool) {
 
 // OutputDir returns the configured output directory.
 func (s *Service) OutputDir() string {
-	return expandTilde(s.config.OutputDir)
+	return paths.ExpandTilde(s.config.OutputDir)
+}
+
+// SubtitleProvider returns the configured subtitle provider, or nil.
+func (s *Service) SubtitleProvider() subtitle.Provider {
+	return s.subtitleSrc
+}
+
+// SubtitleLang returns the preferred subtitle language.
+func (s *Service) SubtitleLang() string {
+	if s.config.SubtitleLang == "" {
+		return common.DefaultSubtitleLang
+	}
+	return s.config.SubtitleLang
+}
+
+// SetSubtitleLang updates the preferred subtitle language.
+func (s *Service) SetSubtitleLang(lang string) {
+	s.config.SubtitleLang = lang
+}
+
+// SearchSubtitles searches for subtitle results matching the query.
+func (s *Service) SearchSubtitles(ctx context.Context, query string) ([]subtitle.Result, error) {
+	if s.subtitleSrc == nil {
+		return nil, fmt.Errorf("subtitle provider not configured")
+	}
+	return s.subtitleSrc.Search(ctx, query)
+}
+
+// SubtitlePage returns seasons and subtitles for a given show.
+// If the base page returns seasons but no subtitles, it automatically
+// fetches the first non-specials season.
+func (s *Service) SubtitlePage(ctx context.Context, sdID, slug, seasonSlug string) (*subtitle.PageResult, error) {
+	if s.subtitleSrc == nil {
+		return nil, fmt.Errorf("subtitle provider not configured")
+	}
+
+	page, err := s.subtitleSrc.Page(ctx, sdID, slug, seasonSlug)
+	if err != nil {
+		return nil, err
+	}
+
+	// If we got subtitles, return as-is.
+	if len(page.Subtitles) > 0 {
+		return page, nil
+	}
+
+	// If no subtitles and no explicit season was requested, try the first
+	// non-specials season. Many shows on SubDL only have subtitles under
+	// season-specific pages.
+	if seasonSlug == "" && len(page.Seasons) > 0 {
+		for _, season := range page.Seasons {
+			// Skip "specials" seasons — users typically want the main show.
+			if strings.Contains(strings.ToLower(season.Slug), "special") {
+				continue
+			}
+			pterm.Debug.Printfln("Trying season %s...", season.Name)
+			seasonPage, err := s.subtitleSrc.Page(ctx, sdID, slug, season.Slug)
+			if err != nil {
+				continue
+			}
+			if len(seasonPage.Subtitles) > 0 {
+				// Merge seasons info from the base page.
+				seasonPage.Seasons = page.Seasons
+				return seasonPage, nil
+			}
+		}
+
+		// If all non-special seasons were empty, try specials as last resort.
+		for _, season := range page.Seasons {
+			if !strings.Contains(strings.ToLower(season.Slug), "special") {
+				continue
+			}
+			seasonPage, err := s.subtitleSrc.Page(ctx, sdID, slug, season.Slug)
+			if err != nil {
+				continue
+			}
+			if len(seasonPage.Subtitles) > 0 {
+				seasonPage.Seasons = page.Seasons
+				return seasonPage, nil
+			}
+		}
+	}
+
+	return page, nil
+}
+
+// DownloadSubtitle downloads and extracts subtitle files into outputDir.
+func (s *Service) DownloadSubtitle(ctx context.Context, sub subtitle.Subtitle, outputDir string) ([]string, error) {
+	if s.subtitleSrc == nil {
+		return nil, fmt.Errorf("subtitle provider not configured")
+	}
+	url := s.subtitleSrc.DownloadURL(sub)
+	return subtitle.DownloadAndExtract(ctx, url, common.DefaultUserAgent, outputDir)
 }
 
 func parseSortKey(s string) float64 {
 	var val float64
 	_, _ = fmt.Sscanf(s, "%f", &val)
 	return val
-}
-
-func expandTilde(path string) string {
-	if path == "" {
-		return path
-	}
-	if path[0] == '~' {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			return filepath.Join(home, path[1:])
-		}
-	}
-	return path
 }

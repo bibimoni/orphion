@@ -15,6 +15,9 @@ import (
 	"github.com/distiled/orphion/internal/ffmpeg"
 	"github.com/distiled/orphion/internal/provider"
 	"github.com/distiled/orphion/internal/provider/allanime"
+	"github.com/distiled/orphion/internal/subtitle"
+	"github.com/distiled/orphion/internal/subtitle/kitsunekko"
+	"github.com/distiled/orphion/internal/subtitle/subdl"
 )
 
 func main() {
@@ -53,12 +56,39 @@ func main() {
 		os.Exit(2)
 	}
 
+	// Initialize subtitle providers (non-fatal on error).
+	subProviders := make(map[string]subtitle.Provider)
+	if p, err := subdl.NewProvider(subdl.DefaultConfig()); err != nil {
+		fmt.Fprintf(os.Stderr, "orphion: subdl: %v\n", err)
+	} else {
+		subProviders["subdl"] = p
+	}
+	if p, err := kitsunekko.NewProvider(kitsunekko.DefaultConfig()); err != nil {
+		fmt.Fprintf(os.Stderr, "orphion: kitsunekko: %v\n", err)
+	} else {
+		subProviders["kitsunekko"] = p
+	}
+
+	var subtitleProvider subtitle.Provider
+	switch len(subProviders) {
+	case 0:
+		fmt.Fprintln(os.Stderr, "orphion: no subtitle providers available (subtitles disabled)")
+	case 1:
+		for _, p := range subProviders {
+			subtitleProvider = p
+		}
+	default:
+		subtitleProvider = subtitle.NewMultiProvider(subProviders)
+	}
+
 	appCfg := app.Config{
 		OutputDir:    cfg.OutputDir,
 		Concurrency:  cfg.Concurrency,
 		PreferredQty: cfg.PreferredQuality,
 		ProviderName: providerName,
 		Providers:    providers,
+		SubtitleLang: cfg.SubtitleLang,
+		SubtitleSrc:  subtitleProvider,
 	}
 	service := app.New(contentProvider, runner, appCfg)
 

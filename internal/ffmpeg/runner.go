@@ -82,8 +82,8 @@ func (r *Runner) ProgressArgs(url, output, referer, userAgent string) []string {
 // Execute runs the FFmpeg binary.
 func (r *Runner) Execute(ctx context.Context, args []string) error {
 	cmd := exec.CommandContext(ctx, r.config.FFmpegPath, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
 	return cmd.Run()
 }
 

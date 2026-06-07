@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/distiled/orphion/internal/common"
 	"github.com/distiled/orphion/internal/provider"
 )
 
@@ -84,7 +85,7 @@ func NewClient(cfg Config) (*Client, error) {
 		return nil, err
 	}
 	if cfg.UserAgent == "" {
-		cfg.UserAgent = defaultUserAgent
+		cfg.UserAgent = common.DefaultUserAgent
 	}
 	if cfg.EpisodeQueryHash == "" {
 		return nil, errors.New("episode query hash is required")

@@ -17,7 +17,7 @@
 
 <img src="orphion.svg" alt="Orphion Logo" width="120" />
 
-<h1 align="center">🎬 Orphion</h1>
+<h1 align="center">Orphion</h1>
 
   <p align="center">
     A command-line tool to search an anime source and download<br/>

@@ -2,12 +2,47 @@
 package paths
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
+
+// ExpandTilde replaces a leading ~ or ~/ with the user's home directory.
+func ExpandTilde(p string) string {
+	if len(p) == 0 || p[0] != '~' {
+		return p
+	}
+	if p == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return p
+		}
+		return home
+	}
+	if len(p) > 1 && p[1] == '/' {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return p
+		}
+		return filepath.Join(home, p[2:])
+	}
+	return p
+}
 
 // TitleToDir returns a sanitized directory name for an anime title.
 func TitleToDir(title string) string {
+	var b strings.Builder
+	b.Grow(len(title))
+	for _, r := range title {
+		if r != ' ' && unicode.IsControl(r) {
+			b.WriteRune(' ')
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	title = b.String()
+
 	const invalid = `<>:"/\|?*` + "\x00"
 	for _, c := range invalid {
 		title = strings.ReplaceAll(title, string(c), " ")
