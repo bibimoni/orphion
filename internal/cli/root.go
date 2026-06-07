@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/distiled/orphion/internal/app"
 	"github.com/distiled/orphion/internal/config"
@@ -69,12 +70,13 @@ func newSearchCmd(service *app.Service) *cobra.Command {
 			if service == nil {
 				return fmt.Errorf("service not configured")
 			}
+			resType = strings.TrimSpace(resType)
 			result, err := service.Search(cmd.Context(), args[0], resType)
 			if err != nil {
 				return err
 			}
 			for _, a := range result.Anime {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s\t%s\n", a.ID, a.Title)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", a.ID, a.Title)
 			}
 			return nil
 		},
@@ -102,6 +104,15 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 			if service == nil {
 				return fmt.Errorf("service not configured")
 			}
+			// Trim whitespace from all string flags to guard against
+			// copy-paste or shell expansion artifacts.
+			animeID = strings.TrimSpace(animeID)
+			title = strings.TrimSpace(title)
+			episodes = strings.TrimSpace(episodes)
+			resType = strings.TrimSpace(resType)
+			quality = strings.TrimSpace(quality)
+			outputDir = strings.TrimSpace(outputDir)
+
 			if animeID == "" && title == "" {
 				return fmt.Errorf("--title-id or --title is required")
 			}

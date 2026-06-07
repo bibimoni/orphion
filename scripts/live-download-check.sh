@@ -84,7 +84,7 @@ STAGE="title search"
 search_output="$("$ORPHION_BIN" search --type anime "$TITLE")"
 title_ids="$(
     printf '%s\n' "$search_output" |
-        awk -F '\t' -v title="$TITLE" '$2 == title { print $1 }'
+        awk -F '\t' -v title="$TITLE" '$2 == title { gsub(/^[ \t]+|[ \t]+$/, "", $1); print $1 }'
 )"
 title_count="$(printf '%s\n' "$title_ids" | sed '/^$/d' | wc -l | tr -d '[:space:]')"
 if [ "$title_count" -ne 1 ]; then

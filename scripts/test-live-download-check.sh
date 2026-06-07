@@ -21,8 +21,8 @@ cat >"$BIN_DIR/orphion" <<'EOF'
 set -euo pipefail
 case "${1:-}" in
     search)
-        printf 'wrong-id\tShirokuma Cafe (Dub)\n'
-        printf 'show-id\tShirokuma Cafe\n'
+        printf '  wrong-id\tShirokuma Cafe (Dub)\n'
+        printf '  show-id\tShirokuma Cafe\n'
         ;;
     download)
         output=""
