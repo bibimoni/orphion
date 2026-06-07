@@ -16,7 +16,6 @@ type Config struct {
 	PreferredQuality string `yaml:"preferred_quality"`
 	Concurrency      int    `yaml:"concurrency"`
 	Provider         string `yaml:"provider"`
-	ProviderAPIKey   string `yaml:"provider_api_key"`
 	FFmpegPath       string `yaml:"ffmpeg_path"`
 
 	concurrencyExplicit bool
@@ -51,7 +50,6 @@ type raw struct {
 	PreferredQuality *string `yaml:"preferred_quality"`
 	Concurrency      *int    `yaml:"concurrency"`
 	Provider         *string `yaml:"provider"`
-	ProviderAPIKey   *string `yaml:"provider_api_key"`
 	FFmpegPath       *string `yaml:"ffmpeg_path"`
 }
 
@@ -126,9 +124,6 @@ func decode(data []byte, path string) (*Config, error) {
 		cfg.Provider = *rawCfg.Provider
 	} else {
 		cfg.Provider = "nyaa"
-	}
-	if rawCfg.ProviderAPIKey != nil {
-		cfg.ProviderAPIKey = *rawCfg.ProviderAPIKey
 	}
 	if rawCfg.FFmpegPath != nil {
 		cfg.FFmpegPath = *rawCfg.FFmpegPath
