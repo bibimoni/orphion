@@ -46,7 +46,7 @@ database, Docker, playback, subtitles, or account management.
 
 ### Prerequisites
 
-- **Go 1.24+** (check `.go-version` for the exact version)
+- **Go 1.26+** (check `.go-version` for the exact version)
 - **FFmpeg** — used to download and remux streams into MKV files
 
 Install FFmpeg:
