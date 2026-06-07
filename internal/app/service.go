@@ -30,6 +30,9 @@ type Config struct {
 // ProgressCallback receives progress updates during a download.
 type ProgressCallback func(episode string, progress ffmpeg.Progress)
 
+// CompletedCallback is called when an episode download finishes successfully.
+type CompletedCallback func(episode string)
+
 // Service orchestrates content lookup and download.
 type Service struct {
 	provider     provider.Provider
@@ -37,6 +40,7 @@ type Service struct {
 	runner       *ffmpeg.Runner
 	config       Config
 	progressCb   ProgressCallback
+	completedCb  CompletedCallback
 	providerName string
 	providers    map[string]provider.Provider
 }
@@ -103,6 +107,11 @@ func (s *Service) ResolveID(ctx context.Context, query, kind string) (string, er
 // SetProgressCallback sets the callback invoked with download progress updates.
 func (s *Service) SetProgressCallback(fn ProgressCallback) {
 	s.progressCb = fn
+}
+
+// SetCompletedCallback sets the callback invoked when an episode download succeeds.
+func (s *Service) SetCompletedCallback(fn CompletedCallback) {
+	s.completedCb = fn
 }
 
 // SetProvider switches the active content provider by registered name.
@@ -351,6 +360,11 @@ func (s *Service) executeJob(ctx context.Context, job download.Job) (string, err
 	if err := os.Rename(partPath, outPath); err != nil {
 		_ = os.Remove(partPath)
 		return "", fmt.Errorf("rename: %w", err)
+	}
+
+	// Notify the UI that this episode is done.
+	if s.completedCb != nil {
+		s.completedCb(job.Episode)
 	}
 
 	return outPath, nil

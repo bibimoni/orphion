@@ -13,6 +13,7 @@ import (
 
 	"github.com/distiled/orphion/internal/app"
 	"github.com/distiled/orphion/internal/config"
+	"github.com/distiled/orphion/internal/ffmpeg"
 	"github.com/distiled/orphion/internal/provider"
 )
 
@@ -184,20 +185,24 @@ func runInteractive(cmd *cobra.Command, service *app.Service) error {
 			current = stepDownload
 
 		case stepDownload:
-			dlSpinner, _ := pterm.DefaultSpinner.Start("Getting episodes...")
-			service.SetProgressCallback(newProgressCallback(dlSpinner))
+			tracker := newDownloadTracker()
+			service.SetProgressCallback(func(episode string, progress ffmpeg.Progress) {
+				tracker.update(episode, progress)
+			})
+			service.SetCompletedCallback(func(episode string) {
+				tracker.markDone(episode)
+			})
 
 			downloadResult, _, err := service.DownloadSelectedEpisodes(ctx, selectedEpisodes, selectedTitle)
+			tracker.stop()
 			if err != nil {
-				dlSpinner.Fail(fmt.Sprintf("Failed: %s", err))
 				return err
 			}
 
 			// Show per-episode failures.
 			if downloadResult.Failed > 0 {
-				dlSpinner.Fail(fmt.Sprintf("%d completed, %d failed", downloadResult.Completed, downloadResult.Failed))
 				for ep, epErr := range downloadResult.Errors {
-					pterm.Error.Printfln("  Episode %s: %s", ep, epErr)
+					pterm.Error.Printfln("Episode %s: %s", ep, epErr)
 				}
 				return fmt.Errorf("%d download(s) failed", downloadResult.Failed)
 			}
@@ -205,9 +210,9 @@ func runInteractive(cmd *cobra.Command, service *app.Service) error {
 			// Show output directory for completed downloads.
 			if len(downloadResult.Outputs) > 0 {
 				dir := outputDirFor(downloadResult.Outputs[0])
-				dlSpinner.Success(fmt.Sprintf("Saved to %s", pterm.LightBlue(dir)))
+				pterm.Success.Printfln("Saved to %s", pterm.LightBlue(dir))
 			} else {
-				dlSpinner.Success(fmt.Sprintf("%d episode(s) downloaded", downloadResult.Completed))
+				pterm.Success.Printfln("%d episode(s) downloaded", downloadResult.Completed)
 			}
 			return nil
 		}
