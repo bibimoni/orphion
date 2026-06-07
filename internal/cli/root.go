@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/distiled/orphion/internal/app"
 	"github.com/distiled/orphion/internal/config"
@@ -16,7 +17,11 @@ var Version = "dev"
 func New(service *app.Service) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "orphion",
-		Short: "Download episodes",
+		Short: "Search and download episodes",
+		Long: `Orphion searches a catalog provider for content and downloads
+selected episodes as MKV files through system FFmpeg.
+
+Run without arguments to start interactive mode.`,
 	}
 	setInteractiveRoot(root, service)
 
@@ -65,12 +70,13 @@ func newSearchCmd(service *app.Service) *cobra.Command {
 			if service == nil {
 				return fmt.Errorf("service not configured")
 			}
+			resType = strings.TrimSpace(resType)
 			result, err := service.Search(cmd.Context(), args[0], resType)
 			if err != nil {
 				return err
 			}
 			for _, a := range result.Anime {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", a.ID, a.Title)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", a.ID, a.Title)
 			}
 			return nil
 		},
@@ -98,6 +104,15 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 			if service == nil {
 				return fmt.Errorf("service not configured")
 			}
+			// Trim whitespace from all string flags to guard against
+			// copy-paste or shell expansion artifacts.
+			animeID = strings.TrimSpace(animeID)
+			title = strings.TrimSpace(title)
+			episodes = strings.TrimSpace(episodes)
+			resType = strings.TrimSpace(resType)
+			quality = strings.TrimSpace(quality)
+			outputDir = strings.TrimSpace(outputDir)
+
 			if animeID == "" && title == "" {
 				return fmt.Errorf("--title-id or --title is required")
 			}
@@ -142,7 +157,7 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 
 	cmd.Flags().StringVar(&episodes, "episodes", "", "Episode expression (e.g. 1-4,7)")
 	cmd.Flags().StringVar(&title, "title", "", "Search query")
-	cmd.Flags().StringVar(&animeID, "title-id", "", "Anime ID")
+	cmd.Flags().StringVar(&animeID, "title-id", "", "Content ID")
 	cmd.Flags().StringVar(&resType, "type", "", "Content type: anime, drama, or empty for both")
 	cmd.Flags().StringVar(&quality, "quality", "", "Preferred quality (e.g. 1080p)")
 	cmd.Flags().StringVar(&outputDir, "output", "", "Output directory")

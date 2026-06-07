@@ -9,7 +9,7 @@ import (
 type Status int
 
 const (
-	StatusPending   Status = iota
+	StatusPending Status = iota
 	StatusRunning
 	StatusCompleted
 	StatusFailed
@@ -67,9 +67,9 @@ func NewScheduler(concurrency int) *Scheduler {
 // it stops scheduling new jobs but waits for started jobs to complete.
 func (s *Scheduler) RunAll(ctx context.Context, jobs []Job, runner Runner) []Result {
 	var (
-		mu      sync.Mutex
-		wg      sync.WaitGroup
-		sem     = make(chan struct{}, s.concurrency)
+		mu        sync.Mutex
+		wg        sync.WaitGroup
+		sem       = make(chan struct{}, s.concurrency)
 		cancelled bool
 	)
 

@@ -13,7 +13,7 @@ import (
 	"github.com/distiled/orphion/internal/cli"
 	"github.com/distiled/orphion/internal/config"
 	"github.com/distiled/orphion/internal/ffmpeg"
-	"github.com/distiled/orphion/internal/provider/catalog"
+	"github.com/distiled/orphion/internal/provider/allanime"
 )
 
 func main() {
@@ -32,7 +32,11 @@ func main() {
 		os.Exit(2)
 	}
 
-	provider := catalog.NewProvider(catalog.Config{BaseURL: catalog.DefaultBaseURL})
+	contentProvider, err := allanime.NewProvider(allanime.DefaultConfig())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "orphion: provider:", err)
+		os.Exit(2)
+	}
 	ffmpegPath := cfg.FFmpegPath
 	if ffmpegPath == "" {
 		ffmpegPath = "ffmpeg"
@@ -48,7 +52,7 @@ func main() {
 		Concurrency:  cfg.Concurrency,
 		PreferredQty: cfg.PreferredQuality,
 	}
-	service := app.New(provider, runner, appCfg)
+	service := app.New(contentProvider, runner, appCfg)
 
 	root := cli.New(service)
 	root.SetContext(ctx)

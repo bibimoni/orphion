@@ -189,7 +189,7 @@ func (s *Service) executeJob(ctx context.Context, job download.Job) error {
 		}
 	}
 
-baseDir := expandTilde(s.config.OutputDir)
+	baseDir := expandTilde(s.config.OutputDir)
 	title := job.Title
 	if title == "" {
 		title = "Download"
