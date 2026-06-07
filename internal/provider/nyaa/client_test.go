@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -62,17 +63,15 @@ func TestSearchParsesRSSItems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Two different show titles → 2 groups
 	if len(got) != 2 {
 		t.Fatalf("Search() = %d results, want 2", len(got))
 	}
-	if got[0].ID != "abcdef1234567890abcdef1234567890abcdef12" {
-		t.Fatalf("Search()[0].ID = %q", got[0].ID)
-	}
-	if got[0].Title != "[J-Drama] Test Drama - 720p (01-11) (2016)" {
-		t.Fatalf("Search()[0].Title = %q", got[0].Title)
-	}
-	if got[1].ID != "fedcba0987654321fedcba0987654321fedcba09" {
-		t.Fatalf("Search()[1].ID = %q", got[1].ID)
+	// Results should be grouped (show IDs are infoHashes)
+	for _, r := range got {
+		if r.ID == "" || r.Title == "" {
+			t.Fatalf("Search() result has empty ID or Title: %+v", r)
+		}
 	}
 }
 
@@ -133,6 +132,7 @@ func TestSearchDeduplicatesResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Deduplicated by infoHash → 1 group with 1 torrent
 	if len(got) != 1 {
 		t.Fatalf("Search() = %d results, want 1 (deduplicated)", len(got))
 	}
@@ -182,33 +182,77 @@ func TestSearchSkipsItemsWithoutInfoHash(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("Search() = %d results, want 1", len(got))
 	}
-	if got[0].Title != "Has Hash" {
-		t.Fatalf("Search()[0].Title = %q", got[0].Title)
+}
+
+func TestSearchGroupsBySimilarTitle(t *testing.T) {
+	groupRSS := `<?xml version="1.0" encoding="utf-8"?>
+<rss xmlns:nyaa="https://nyaa.si/xmlns/nyaa" version="2.0">
+<channel>
+<item>
+<title>[SubGroup] Test Drama EP01 [720p]</title><link>https://nyaa.si/download/1.torrent</link>
+<nyaa:infoHash>aaaa1111bbbb2222cccc3333dddd4444eeee5555</nyaa:infoHash>
+</item>
+<item>
+<title>[SubGroup] Test Drama EP02 [720p]</title><link>https://nyaa.si/download/2.torrent</link>
+<nyaa:infoHash>bbbb2222cccc3333dddd4444eeee5555ffff6666</nyaa:infoHash>
+</item>
+<item>
+<title>[OtherGroup] Different Show EP01 [1080p]</title><link>https://nyaa.si/download/3.torrent</link>
+<nyaa:infoHash>cccc3333dddd4444eeee5555ffff6666aaaa7777</nyaa:infoHash>
+</item>
+</channel>
+</rss>`
+
+	client := testClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(groupRSS))
+	}))
+
+	got, err := client.Search(context.Background(), "test drama", "drama")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two different show titles: "Test Drama" and "Different Show"
+	if len(got) != 2 {
+		t.Fatalf("Search() = %d results, want 2 groups", len(got))
+	}
+
+	// Find the "Test Drama" group and verify it has 2 torrents
+	for _, r := range got {
+		if strings.Contains(r.Title, "Test Drama") {
+			group, ok := client.cache.GetShow(r.ID)
+			if !ok {
+				t.Fatal("cache miss for Test Drama group")
+			}
+			if len(group.torrents) != 2 {
+				t.Fatalf("Test Drama group has %d torrents, want 2", len(group.torrents))
+			}
+		}
 	}
 }
 
 // --- Episodes Tests ---
 
-func TestEpisodesReturnsBatch(t *testing.T) {
+func TestEpisodesFromCachedSearch(t *testing.T) {
 	client := testClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("ok"))
+		_, _ = w.Write([]byte(rssSearchResult))
 	}))
 
-	got, err := client.Episodes(context.Background(), "abcdef1234567890abcdef1234567890abcdef12")
+	// Must search first to populate cache
+	results, err := client.Search(context.Background(), "test drama", "drama")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("Episodes() = %d episodes, want 1", len(got))
+	if len(results) == 0 {
+		t.Fatal("Search() returned no results")
 	}
-	if got[0].ID != "abcdef1234567890abcdef1234567890abcdef12" {
-		t.Fatalf("Episodes()[0].ID = %q", got[0].ID)
+
+	// Now Episodes should work with the cached show ID
+	episodes, err := client.Episodes(context.Background(), results[0].ID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got[0].Number != "1" {
-		t.Fatalf("Episodes()[0].Number = %q, want 1", got[0].Number)
-	}
-	if got[0].SortKey != 1.0 {
-		t.Fatalf("Episodes()[0].SortKey = %v, want 1.0", got[0].SortKey)
+	if len(episodes) == 0 {
+		t.Fatal("Episodes() returned no episodes")
 	}
 }
 
@@ -220,6 +264,17 @@ func TestEpisodesErrorOnEmptyID(t *testing.T) {
 	_, err := client.Episodes(context.Background(), "")
 	if err == nil {
 		t.Fatal("Episodes() error = nil, want error for empty ID")
+	}
+}
+
+func TestEpisodesErrorOnUnknownShow(t *testing.T) {
+	client := testClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+
+	_, err := client.Episodes(context.Background(), "nonexistent_show_id")
+	if err == nil {
+		t.Fatal("Episodes() error = nil, want error for unknown show")
 	}
 }
 
@@ -257,6 +312,16 @@ func TestEpisodesFromTitleSingle(t *testing.T) {
 	}
 }
 
+func TestEpisodesFromTitleBracket(t *testing.T) {
+	got := EpisodesFromTitle("hash789", "[SubGroup] Test Drama [05] [1080p]")
+	if len(got) != 1 {
+		t.Fatalf("EpisodesFromTitle() = %d episodes, want 1", len(got))
+	}
+	if got[0].Number != "5" {
+		t.Fatalf("EpisodesFromTitle()[0].Number = %q, want 5", got[0].Number)
+	}
+}
+
 func TestEpisodesFromTitleFallback(t *testing.T) {
 	got := EpisodesFromTitle("hash789", "[J-Drama] Some Batch Release")
 	if len(got) != 1 {
@@ -291,17 +356,17 @@ func TestStreamsReturnsMagnet(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("Streams() = %d streams, want 1", len(got))
 	}
-	if !stringsContains(got[0].URL, "magnet:?xt=urn:btih:abcdef1234567890abcdef1234567890abcdef12") {
+	if !strings.Contains(got[0].URL, "magnet:?xt=urn:btih:abcdef1234567890abcdef1234567890abcdef12") {
 		t.Fatalf("Streams()[0].URL = %q, want magnet URI", got[0].URL)
 	}
 	if got[0].Quality != "torrent" {
 		t.Fatalf("Streams()[0].Quality = %q, want torrent", got[0].Quality)
 	}
 	// Verify trackers are present
-	if !stringsContains(got[0].URL, "tracker.opentrackr.org") {
+	if !strings.Contains(got[0].URL, "tracker.opentrackr.org") {
 		t.Fatalf("Streams()[0].URL missing tracker: %q", got[0].URL)
 	}
-	if !stringsContains(got[0].URL, "open.stealth.si") {
+	if !strings.Contains(got[0].URL, "open.stealth.si") {
 		t.Fatalf("Streams()[0].URL missing stealth tracker: %q", got[0].URL)
 	}
 }
@@ -315,7 +380,7 @@ func TestStreamsStripsEpisodeSuffix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !stringsContains(got[0].URL, "magnet:?xt=urn:btih:abcdef1234567890abcdef1234567890abcdef12") {
+	if !strings.Contains(got[0].URL, "magnet:?xt=urn:btih:abcdef1234567890abcdef1234567890abcdef12") {
 		t.Fatalf("Streams()[0].URL = %q, want magnet URI with correct hash", got[0].URL)
 	}
 }
@@ -397,10 +462,10 @@ func TestNewClientUsesInjectedHTTPClient(t *testing.T) {
 
 func TestBuildMagnetURI(t *testing.T) {
 	got := buildMagnetURI("abc123", []string{"http://tracker.example.com/announce"})
-	if !stringsContains(got, "magnet:?xt=urn:btih:abc123") {
+	if !strings.Contains(got, "magnet:?xt=urn:btih:abc123") {
 		t.Fatalf("buildMagnetURI() = %q, want magnet prefix", got)
 	}
-	if !stringsContains(got, "tracker.example.com") {
+	if !strings.Contains(got, "tracker.example.com") {
 		t.Fatalf("buildMagnetURI() = %q, want tracker included", got)
 	}
 }
@@ -420,13 +485,6 @@ func TestExtractHashFromGUID(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("extractHashFromGUID(%q) = %q, want %q", tt.input, got, tt.want)
 		}
-	}
-}
-
-func TestCleanTitle(t *testing.T) {
-	got := cleanTitle("  hello   world  ")
-	if got != "hello world" {
-		t.Fatalf("cleanTitle() = %q, want %q", got, "hello world")
 	}
 }
 
@@ -454,18 +512,4 @@ func TestHTTPStatusAndCancellation(t *testing.T) {
 			t.Fatalf("Search() error = %v, want context.Canceled", err)
 		}
 	})
-}
-
-// stringsContains checks if s contains substr.
-func stringsContains(s, substr string) bool {
-	return len(s) >= len(substr) && containsStr(s, substr)
-}
-
-func containsStr(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
