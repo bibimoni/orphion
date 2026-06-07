@@ -230,6 +230,8 @@ func (c *Client) Search(ctx context.Context, query, kind string) ([]provider.Ani
 
 // Episodes returns episodes for a given show (grouped from Nyaa search results).
 // Each torrent becomes one or more episodes depending on the title parsing.
+// If the show ID is not in the cache (e.g. --title-id used without prior search),
+// it falls back to a single-episode entry using the ID as the infoHash.
 func (c *Client) Episodes(ctx context.Context, animeID string) ([]provider.Episode, error) {
 	if animeID == "" {
 		return nil, fmt.Errorf("nyaa episodes: empty anime ID")
@@ -237,7 +239,11 @@ func (c *Client) Episodes(ctx context.Context, animeID string) ([]provider.Episo
 
 	group, ok := c.cache.GetShow(animeID)
 	if !ok {
-		return nil, fmt.Errorf("nyaa episodes: unknown show %q (run search first)", animeID)
+		// No cached search results — treat the animeID as a raw infoHash
+		// and return a single episode so download can proceed.
+		return []provider.Episode{
+			{ID: animeID, Number: "1", SortKey: 1.0},
+		}, nil
 	}
 
 	var episodes []provider.Episode

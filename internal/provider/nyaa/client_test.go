@@ -267,14 +267,26 @@ func TestEpisodesErrorOnEmptyID(t *testing.T) {
 	}
 }
 
-func TestEpisodesErrorOnUnknownShow(t *testing.T) {
+func TestEpisodesFallbackOnUnknownShow(t *testing.T) {
 	client := testClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	}))
 
-	_, err := client.Episodes(context.Background(), "nonexistent_show_id")
-	if err == nil {
-		t.Fatal("Episodes() error = nil, want error for unknown show")
+	// When the show ID is not in cache (e.g. --title-id used without prior
+	// search), Episodes() should return a single fallback episode using
+	// the ID as the infoHash.
+	eps, err := client.Episodes(context.Background(), "nonexistent_show_id")
+	if err != nil {
+		t.Fatalf("Episodes() error = %v, want nil (fallback)", err)
+	}
+	if len(eps) != 1 {
+		t.Fatalf("Episodes() = %d episodes, want 1 fallback", len(eps))
+	}
+	if eps[0].ID != "nonexistent_show_id" {
+		t.Fatalf("fallback episode ID = %q, want %q", eps[0].ID, "nonexistent_show_id")
+	}
+	if eps[0].Number != "1" {
+		t.Fatalf("fallback episode Number = %q, want 1", eps[0].Number)
 	}
 }
 
