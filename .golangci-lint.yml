@@ -1,0 +1,45 @@
+version: "2"
+run:
+  go: "1.26"
+  tests: true
+linters:
+  enable:
+    - bodyclose
+    - misspell
+    - nilerr
+    - noctx
+    - prealloc
+    - staticcheck
+    - unconvert
+    - whitespace
+  settings:
+    misspell:
+      locale: US
+    staticcheck:
+      checks:
+        - all
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    gofmt:
+      simplify: true
+    goimports:
+      local-prefixes:
+        - github.com/distiled/orphion
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
