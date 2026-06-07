@@ -50,7 +50,8 @@ func (r *Runner) Args(url, output, referer, userAgent string) []string {
 		"-loglevel", "warning",
 		"-headers", headers,
 		"-i", url,
-		"-map", "0",
+		"-map", "0:v",
+		"-map", "0:a",
 		"-c", "copy",
 		output,
 	}
@@ -69,7 +70,8 @@ func (r *Runner) ProgressArgs(url, output, referer, userAgent string) []string {
 		"-stats_period", "1",
 		"-headers", headers,
 		"-i", url,
-		"-map", "0",
+		"-map", "0:v",
+		"-map", "0:a",
 		"-c", "copy",
 		output,
 	}
