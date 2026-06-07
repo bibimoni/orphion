@@ -98,7 +98,6 @@ output_dir: ~/Anime
 preferred_quality: 1080p
 concurrency: 1
 provider: catalog
-default_type: anime
 ffmpeg_path: ffmpeg
 ```
 

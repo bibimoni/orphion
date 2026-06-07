@@ -75,7 +75,7 @@ func newSearchCmd(service *app.Service) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&resType, "type", "anime", "Content type: anime or drama")
+	cmd.Flags().StringVar(&resType, "type", "", "Content type: anime, drama, or empty for both")
 	return cmd
 }
 
@@ -100,9 +100,6 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 			}
 			if animeID == "" && title == "" {
 				return fmt.Errorf("--title-id or --title is required")
-			}
-			if resType == "" {
-				resType = "anime"
 			}
 			if episodes == "" {
 				return fmt.Errorf("--episodes is required")
@@ -146,7 +143,7 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 	cmd.Flags().StringVar(&episodes, "episodes", "", "Episode expression (e.g. 1-4,7)")
 	cmd.Flags().StringVar(&title, "title", "", "Search query")
 	cmd.Flags().StringVar(&animeID, "title-id", "", "Anime ID")
-	cmd.Flags().StringVar(&resType, "type", "anime", "Content type: anime or drama")
+	cmd.Flags().StringVar(&resType, "type", "", "Content type: anime, drama, or empty for both")
 	cmd.Flags().StringVar(&quality, "quality", "", "Preferred quality (e.g. 1080p)")
 	cmd.Flags().StringVar(&outputDir, "output", "", "Output directory")
 	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "Download concurrency (1-4)")

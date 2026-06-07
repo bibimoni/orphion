@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/distiled/orphion/internal/provider"
@@ -35,7 +36,16 @@ func NewClient(cfg Config) *Client {
 }
 
 // Search queries the catalog for anime matching a query and kind.
+// If kind is empty, searches both anime and drama concurrently and
+// returns merged, source-labeled results.
 func (c *Client) Search(ctx context.Context, query, kind string) ([]provider.Anime, error) {
+	if kind == "" {
+		return c.searchGlobal(ctx, query)
+	}
+	return c.searchSingle(ctx, query, kind)
+}
+
+func (c *Client) searchSingle(ctx context.Context, query, kind string) ([]provider.Anime, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/search", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create search request: %w", err)
@@ -62,6 +72,37 @@ func (c *Client) Search(ctx context.Context, query, kind string) ([]provider.Ani
 			ID:    r.ID,
 			Title: r.Title,
 		})
+	}
+	return out, nil
+}
+
+func (c *Client) searchGlobal(ctx context.Context, query string) ([]provider.Anime, error) {
+	var (
+		mu      sync.Mutex
+		out     []provider.Anime
+		errs    []error
+		wg      sync.WaitGroup
+	)
+	for _, kind := range []string{"anime", "drama"} {
+		wg.Go(func() {
+			results, err := c.searchSingle(ctx, query, kind)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs = append(errs, err)
+				return
+			}
+			for _, r := range results {
+				out = append(out, provider.Anime{
+					ID:    r.ID,
+					Title: r.Title,
+				})
+			}
+		})
+	}
+	wg.Wait()
+	if len(out) == 0 && len(errs) > 0 {
+		return nil, errs[0]
 	}
 	return out, nil
 }
