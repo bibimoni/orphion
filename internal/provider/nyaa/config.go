@@ -46,7 +46,7 @@ func DefaultConfig() Config {
 		BaseURL:   "https://nyaa.si",
 		Category:  CategoryLiveActionSubbed,
 		UserAgent: defaultUserAgent,
-		Timeout:   30 * time.Second,
+		Timeout:   60 * time.Second,
 	}
 }
 

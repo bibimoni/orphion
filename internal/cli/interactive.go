@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/pterm/pterm"
@@ -11,6 +12,10 @@ import (
 	"github.com/distiled/orphion/internal/app"
 	"github.com/distiled/orphion/internal/config"
 )
+
+// imeArtifactRe matches common IME/terminal escape artifacts that pterm
+// captures as literal text (e.g. "alt+", "ctrl+", ESC sequences).
+var imeArtifactRe = regexp.MustCompile(`(?i)^(?:alt\+|ctrl\+|meta\+|esc\b\s*)`)
 
 // setInteractiveRoot configures the root command for interactive mode when
 // invoked without a subcommand.
@@ -38,7 +43,7 @@ func runInteractive(cmd *cobra.Command, service *app.Service) error {
 	if err != nil {
 		return fmt.Errorf("search: %w", err)
 	}
-	query = strings.TrimSpace(query)
+	query = cleanUserInput(query)
 	if query == "" {
 		return fmt.Errorf("search query cannot be empty")
 	}
@@ -130,4 +135,14 @@ func runInteractive(cmd *cobra.Command, service *app.Service) error {
 	}
 
 	return nil
+}
+
+// cleanUserInput trims whitespace and strips IME/terminal escape artifacts
+// that pterm's InteractiveTextInput may capture as literal text on macOS
+// (e.g. "alt+" prefix from Alt+key used to switch input methods).
+func cleanUserInput(s string) string {
+	s = strings.TrimSpace(s)
+	// Remove leading IME artifacts (e.g. "alt+", "ctrl+").
+	s = imeArtifactRe.ReplaceAllString(s, "")
+	return strings.TrimSpace(s)
 }

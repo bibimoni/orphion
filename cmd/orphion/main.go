@@ -49,11 +49,7 @@ func main() {
 	}
 
 	// Create torrent client for magnet URI downloads (lazy-init on first use).
-	torrentClient, err := torrent.NewClient(torrent.Config{DataDir: filepath.Join(expandTilde(cfg.OutputDir), ".torrents")})
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "orphion: torrent:", err)
-		os.Exit(2)
-	}
+	torrentClient := torrent.NewClient(torrent.Config{DataDir: filepath.Join(expandTilde(cfg.OutputDir), ".torrents")})
 	defer func() { _ = torrentClient.Close() }()
 
 	appCfg := app.Config{

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/anacrolix/torrent"
@@ -23,38 +24,55 @@ type Config struct {
 }
 
 // Client wraps anacrolix/torrent for magnet URI downloads.
+// The underlying anacrolix client is initialized lazily on first use
+// to avoid UPnP/port-mapping noise at startup.
 type Client struct {
 	cfg    Config
 	client *torrent.Client
+	init   sync.Once
+	initOk bool
 }
 
-// NewClient creates a new torrent client.
-func NewClient(cfg Config) (*Client, error) {
-	dataDir := cfg.DataDir
-	if dataDir == "" {
-		dataDir = filepath.Join(os.TempDir(), "orphion-torrent")
-	}
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		return nil, fmt.Errorf("torrent: create data dir: %w", err)
-	}
+// NewClient creates a torrent client with lazy initialization.
+// The underlying anacrolix client is NOT created until the first
+// call to Download, so UPnP/port-mapping warnings are deferred
+// until a magnet URI actually needs to be downloaded.
+func NewClient(cfg Config) *Client {
+	return &Client{cfg: cfg}
+}
 
-	clientCfg := torrent.NewDefaultClientConfig()
-	clientCfg.DataDir = dataDir
+// initClient lazily creates the underlying anacrolix/torrent client.
+func (c *Client) initClient() error {
+	var initErr error
+	c.init.Do(func() {
+		dataDir := c.cfg.DataDir
+		if dataDir == "" {
+			dataDir = filepath.Join(os.TempDir(), "orphion-torrent")
+		}
+		if err := os.MkdirAll(dataDir, 0o755); err != nil {
+			initErr = fmt.Errorf("torrent: create data dir: %w", err)
+			return
+		}
 
-	cl, err := torrent.NewClient(clientCfg)
-	if err != nil {
-		return nil, fmt.Errorf("torrent: init client: %w", err)
-	}
+		clientCfg := torrent.NewDefaultClientConfig()
+		clientCfg.DataDir = dataDir
 
-	return &Client{
-		cfg:    cfg,
-		client: cl,
-	}, nil
+		cl, err := torrent.NewClient(clientCfg)
+		if err != nil {
+			initErr = fmt.Errorf("torrent: init client: %w", err)
+			return
+		}
+
+		c.client = cl
+		c.initOk = true
+	})
+	return initErr
 }
 
 // Close shuts down the torrent client gracefully.
+// No-op if the client was never initialized (lazy init).
 func (c *Client) Close() error {
-	if c.client == nil {
+	if !c.initOk {
 		return nil
 	}
 	errs := c.client.Close()
@@ -70,6 +88,10 @@ func (c *Client) Close() error {
 // Download downloads a torrent from a magnet URI to the given output directory.
 // It returns the paths to the downloaded file(s).
 func (c *Client) Download(ctx context.Context, magnetURI, outputDir string) ([]string, error) {
+	if err := c.initClient(); err != nil {
+		return nil, err
+	}
+
 	t, err := c.client.AddMagnet(magnetURI)
 	if err != nil {
 		return nil, fmt.Errorf("torrent: add magnet: %w", err)

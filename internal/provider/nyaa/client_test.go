@@ -420,7 +420,7 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.UserAgent == "" {
 		t.Fatal("UserAgent is empty")
 	}
-	if cfg.Timeout != 30*time.Second {
+	if cfg.Timeout != 60*time.Second {
 		t.Fatalf("Timeout = %s", cfg.Timeout)
 	}
 }

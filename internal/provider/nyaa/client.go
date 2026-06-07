@@ -131,7 +131,7 @@ func NewClient(cfg Config) (*Client, error) {
 		cfg.UserAgent = defaultUserAgent
 	}
 	if cfg.Timeout <= 0 {
-		cfg.Timeout = 30 * time.Second
+		cfg.Timeout = 60 * time.Second
 	}
 	if cfg.HTTPClient == nil {
 		cfg.HTTPClient = &http.Client{Timeout: cfg.Timeout}
@@ -494,8 +494,42 @@ func EpisodesFromTitle(infoHash, title string) []provider.Episode {
 	}
 }
 
-// fetch retrieves raw bytes from a URL.
+// fetch retrieves raw bytes from a URL with up to 2 retries on transient failures.
 func (c *Client) fetch(ctx context.Context, rawURL string) ([]byte, error) {
+	const maxRetries = 2
+
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(attempt) * 2 * time.Second):
+			}
+		}
+
+		data, err := c.doFetch(ctx, rawURL)
+		if err == nil {
+			return data, nil
+		}
+		lastErr = err
+
+		// Only retry on timeout or connection errors, not on HTTP status errors.
+		if strings.Contains(err.Error(), "deadline exceeded") ||
+			strings.Contains(err.Error(), "connection refused") ||
+			strings.Contains(err.Error(), "temporary") ||
+			strings.Contains(err.Error(), "EOF") ||
+			strings.Contains(err.Error(), "reset by peer") {
+			continue
+		}
+		// Non-retryable error.
+		break
+	}
+	return nil, lastErr
+}
+
+// doFetch performs a single HTTP fetch attempt.
+func (c *Client) doFetch(ctx context.Context, rawURL string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
