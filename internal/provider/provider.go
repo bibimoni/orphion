@@ -1,3 +1,4 @@
+// Package provider defines the catalog provider interface.
 package provider
 
 import (

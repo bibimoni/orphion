@@ -1,6 +1,7 @@
 package ffmpeg
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -65,7 +66,9 @@ func TestCleanupPartial(t *testing.T) {
 	dir := t.TempDir()
 	r, _ := NewRunner(Config{FFmpegPath: "/usr/bin/ffmpeg"})
 	p := filepath.Join(dir, "ep.part.mkv")
-	os.WriteFile(p, []byte("test"), 0o644)
+	if err := os.WriteFile(p, []byte("test"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	r.CleanupPartial(p)
 	if _, err := os.Stat(p); err == nil {
 		t.Fatal("partial file still exists after cleanup")
@@ -80,7 +83,7 @@ func TestRunFakeFFmpeg(t *testing.T) {
 	out := filepath.Join(dir, "test.mkv")
 
 	// Use real FFmpeg to validate fake-ffmpeg
-	cmd := exec.Command("../../testdata/fake-ffmpeg", "--mode=success", "--", out)
+	cmd := exec.CommandContext(context.Background(), "../../testdata/fake-ffmpeg", "--mode=success", "--", out)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		t.Fatal(err)

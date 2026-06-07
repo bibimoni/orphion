@@ -1,3 +1,4 @@
+// Package episode parses and resolves episode number expressions.
 package episode
 
 import (
@@ -131,7 +132,7 @@ func parseSortKey(s string) float64 {
 // this request and the available episodes.
 func AllNumbers(req *Request, episodes []Episode) []string {
 	if req.All {
-		var nums []string
+		nums := make([]string, 0, len(episodes))
 		for _, ep := range episodes {
 			nums = append(nums, ep.Number)
 		}

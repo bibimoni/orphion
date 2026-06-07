@@ -1,3 +1,4 @@
+// Package ffmpeg wraps FFmpeg process execution with progress tracking.
 package ffmpeg
 
 import (
@@ -123,7 +124,7 @@ func (r *Runner) RenamePart(part, final string) error {
 
 // CleanupPartial removes partial files.
 func (r *Runner) CleanupPartial(path string) {
-	os.Remove(path)
+	_ = os.Remove(path)
 }
 
 // parseProgressOutput reads FFmpeg's -progress key=value output.

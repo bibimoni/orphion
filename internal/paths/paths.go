@@ -1,3 +1,4 @@
+// Package paths generates output file paths for downloaded episodes.
 package paths
 
 import (

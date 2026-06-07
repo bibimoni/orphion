@@ -1,3 +1,4 @@
+// Package config handles YAML configuration for Orphion.
 package config
 
 import (

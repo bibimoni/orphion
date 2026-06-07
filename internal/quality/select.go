@@ -1,3 +1,4 @@
+// Package quality selects the best available stream quality.
 package quality
 
 import (

@@ -1,3 +1,4 @@
+// Package app implements the core application services for Orphion.
 package app
 
 import (
@@ -56,7 +57,7 @@ type DownloadResult struct {
 	Completed int
 	Failed    int
 	Skipped   int
-	Cancelled int
+	Canceled  int
 	Missing   []string
 	Outputs   []string         // Output file paths for completed downloads
 	Errors    map[string]error // Episode number → error for failed downloads
@@ -193,7 +194,7 @@ func (s *Service) DownloadEpisodes(ctx context.Context, animeID, expr, title str
 				dr.Errors[epNum] = r.Err
 			}
 		case download.StatusCancelled:
-			dr.Cancelled++
+			dr.Canceled++
 		}
 	}
 	dr.Missing = missing
@@ -325,7 +326,7 @@ func (s *Service) OutputDir() string {
 
 func parseSortKey(s string) float64 {
 	var val float64
-	fmt.Sscanf(s, "%f", &val)
+	_, _ = fmt.Sscanf(s, "%f", &val)
 	return val
 }
 
