@@ -25,7 +25,7 @@ type Config struct {
 }
 
 // DefaultBaseURL is the upstream catalog endpoint.
-const DefaultBaseURL = "https://allanime.delivery"
+const DefaultBaseURL = "https://allanime.day"
 
 // NewClient creates a Catalog API client.
 func NewClient(cfg Config) *Client {
