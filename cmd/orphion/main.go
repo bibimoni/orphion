@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/distiled/orphion/internal/app"
@@ -77,20 +78,11 @@ func defaultConfigPath() string {
 func classifyError(err error) int {
 	msg := err.Error()
 	switch {
-	case contains(msg, "usage") || contains(msg, "invalid") || contains(msg, "required") || contains(msg, "not configured") || contains(msg, "config"):
+	case strings.Contains(msg, "usage") || strings.Contains(msg, "invalid") || strings.Contains(msg, "required") || strings.Contains(msg, "not configured") || strings.Contains(msg, "config"):
 		return 2
-	case contains(msg, "not found") || contains(msg, "no results") || contains(msg, "ambiguous") || contains(msg, "provider"):
+	case strings.Contains(msg, "not found") || strings.Contains(msg, "no results") || strings.Contains(msg, "ambiguous") || strings.Contains(msg, "provider"):
 		return 3
 	default:
 		return 1
 	}
-}
-
-func contains(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }

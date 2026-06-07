@@ -27,7 +27,7 @@ func TitleToDir(title string) string {
 // SanitizeLabel restricts episode label to numeric characters and dots.
 func SanitizeLabel(label string) string {
 	filtered := make([]byte, 0, len(label))
-	for i := 0; i < len(label); i++ {
+	for i := range len(label) {
 		c := label[i]
 		if (c >= '0' && c <= '9') || c == '.' {
 			filtered = append(filtered, c)
