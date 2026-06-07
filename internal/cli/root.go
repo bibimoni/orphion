@@ -189,25 +189,32 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 				spinner.Success(fmt.Sprintf("Resolved to %s", pterm.Cyan(animeID)))
 			}
 
-			// Set up progress display.
-			service.SetProgressCallback(downloadProgressCallback)
+			// Set up animated progress display.
+			dlSpinner, _ := pterm.DefaultSpinner.Start("Getting episodes...")
+			service.SetProgressCallback(newProgressCallback(dlSpinner))
 
 			result, _, err := service.DownloadEpisodes(cmd.Context(), animeID, episodes, title)
 			if err != nil {
+				dlSpinner.Fail(fmt.Sprintf("Failed: %s", err))
 				return err
+			}
+
+			// Show per-episode failures.
+			if result.Failed > 0 {
+				dlSpinner.Fail(fmt.Sprintf("%d completed, %d failed", result.Completed, result.Failed))
+				for ep, epErr := range result.Errors {
+					pterm.Error.Printfln("  Episode %s: %s", ep, epErr)
+				}
+				return &ExitError{code: 1, msg: "some downloads failed"}
 			}
 
 			// Show output directory for completed downloads.
 			if len(result.Outputs) > 0 {
 				dir := outputDirFor(result.Outputs[0])
-				pterm.Success.Printfln("Saved to %s", pterm.LightBlue(dir))
+				dlSpinner.Success(fmt.Sprintf("Saved to %s", pterm.LightBlue(dir)))
+			} else {
+				dlSpinner.Success(fmt.Sprintf("%d episode(s) downloaded", result.Completed))
 			}
-
-			if result.Failed > 0 {
-				pterm.Error.Printfln("%d completed, %d failed", result.Completed, result.Failed)
-				return &ExitError{code: 1, msg: "some downloads failed"}
-			}
-			pterm.Success.Printfln("%d episode(s) downloaded", result.Completed)
 			return nil
 		},
 	}
@@ -224,18 +231,25 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 	return cmd
 }
 
-// downloadProgressCallback displays an animated spinner with live download stats.
-func downloadProgressCallback(episode string, progress ffmpeg.Progress) {
-	speed := progress.Speed
-	if speed == "" {
-		speed = "..."
+// newProgressCallback returns a ProgressCallback that updates a pterm spinner
+// with live download stats. The spinner animates continuously while
+// UpdateText refreshes the displayed speed/size on each FFmpeg progress event.
+func newProgressCallback(spinner *pterm.SpinnerPrinter) app.ProgressCallback {
+	return func(episode string, progress ffmpeg.Progress) {
+		if progress.Speed == "" && progress.Bytes == 0 {
+			// Initial callback — download is starting, no data yet.
+			spinner.UpdateText(fmt.Sprintf("%s Episode %s  connecting...",
+				pterm.Cyan("↓"), episode))
+			return
+		}
+		speed := progress.Speed
+		if speed == "" {
+			speed = "..."
+		}
+		size := formatBytes(progress.Bytes)
+		spinner.UpdateText(fmt.Sprintf("%s Episode %s  %s/s  %s",
+			pterm.Cyan("↓"), episode, pterm.Yellow(speed), size))
 	}
-	size := formatBytes(progress.Bytes)
-	label := fmt.Sprintf("Episode %s", episode)
-
-	// Write a single updating line to stderr (overwrites itself).
-	pterm.Fprinto(os.Stderr, fmt.Sprintf("  %s %s  %s/s  %s",
-		pterm.Cyan("↓"), pterm.Bold.Sprint(label), pterm.Yellow(speed), size))
 }
 
 // formatBytes returns a human-readable byte string.
