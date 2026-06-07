@@ -263,7 +263,7 @@ func (c *Client) Streams(ctx context.Context, episodeID string) ([]provider.Stre
 			lastErr = err
 			continue
 		}
-		streams := resp.streams(c.userAgent)
+		streams := resp.streams(c.userAgent, c.proxyURL)
 		if len(streams) > 0 {
 			return streams, nil
 		}
@@ -410,10 +410,24 @@ func (r *streamResponse) animeTitle() string {
 }
 
 // streams converts the stream response into provider.Stream objects.
-func (r *streamResponse) streams(userAgent string) []provider.Stream {
+// CDN URLs are rewritten through the Bettermelon proxy to bypass Cloudflare.
+func (r *streamResponse) streams(userAgent string, proxyURL *url.URL) []provider.Stream {
 	fileURL := r.Data.Episode.Sources.Sources.File
 	if fileURL == "" {
 		return nil
+	}
+	// CDN URLs (e.g. cdn.mewstream.buzz) are Cloudflare-protected.
+	// Route them through proxy.bettermelon.ru/proxy?url=<encoded>.
+	if proxyURL != nil {
+		parsed, err := url.Parse(fileURL)
+		if err == nil && parsed.Scheme != "" && parsed.Host != "" {
+			proxy := *proxyURL
+			q := proxy.Query()
+			q.Set("url", parsed.String())
+			proxy.RawQuery = q.Encode()
+			proxy.Path = "/proxy"
+			fileURL = proxy.String()
+		}
 	}
 	headers := make(http.Header)
 	headers.Set("Referer", "https://bettermelon.ru/")
