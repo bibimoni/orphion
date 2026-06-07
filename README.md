@@ -47,7 +47,6 @@ database, Docker, playback, subtitles, or account management.
 
 ### Prerequisites
 
-- **Go 1.26+** (check `.go-version` for the exact version)
 - **FFmpeg** — used to download and remux streams into MKV files
 
 Install FFmpeg:
@@ -74,7 +73,25 @@ ffmpeg -version
 curl -fsSL https://raw.githubusercontent.com/bibimoni/orphion/main/install.sh | bash
 ```
 
-Or clone and build manually:
+The installer downloads the latest published binary from
+[GitHub Releases](https://github.com/bibimoni/orphion/releases), verifies its
+SHA-256 checksum, and installs it to `/usr/local/bin`. It does not require Go.
+Orphion is not currently distributed through Homebrew; the Homebrew command
+above installs FFmpeg only.
+
+To install somewhere else:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bibimoni/orphion/main/install.sh \
+  | ORPHION_INSTALL_DIR="$HOME/.local/bin" bash
+```
+
+Ensure the selected directory is on `PATH`.
+
+#### Build From Source
+
+Building from source requires Go 1.26+ (check `.go-version` for the exact
+version):
 
 ```bash
 git clone https://github.com/bibimoni/orphion.git
@@ -82,6 +99,19 @@ cd orphion
 go build -trimpath -ldflags="-s -w" -o dist/orphion ./cmd/orphion
 sudo cp dist/orphion /usr/local/bin/
 ```
+
+### Publishing A Release
+
+Maintainers publish releases manually from GitHub:
+
+1. Open **Releases** and select **Draft a new release**.
+2. Create a semantic version tag such as `v0.1.0` from `main`.
+3. Add release notes and select **Publish release**.
+4. The tag-triggered workflow runs tests, builds macOS/Linux binaries for
+   AMD64 and ARM64, and uploads archives plus `checksums.txt` to that release.
+
+The release is published immediately, not left as a draft. The tag is embedded
+in the binary and appears in `orphion version`.
 
 #### Configuration
 
