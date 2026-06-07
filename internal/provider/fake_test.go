@@ -37,7 +37,7 @@ func TestRegistry_Register(t *testing.T) {
 func TestRegistry_Get(t *testing.T) {
 	reg := NewRegistry()
 	prov := &fakeProvider{name: "test"}
-	reg.Register("test", prov)
+	reg.Register("test", prov) //nolint:errcheck // test registration cannot fail
 
 	got, err := reg.Get("test")
 	if err != nil {

@@ -77,7 +77,9 @@ func TestSafePath(t *testing.T) {
 func TestContainment(t *testing.T) {
 	dir := t.TempDir()
 	base := filepath.Join(dir, "Anime")
-	os.MkdirAll(base, 0o755)
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	path := OutputLayout(base, "Test", "1")
 	if !strings.HasPrefix(path, filepath.Clean(base)) {

@@ -15,6 +15,8 @@
 <br />
 <div align="center">
 
+<img src="orphion.svg" alt="Orphion Logo" width="120" />
+
 <h1 align="center">🎬 Orphion</h1>
 
   <p align="center">
