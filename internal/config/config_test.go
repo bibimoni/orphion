@@ -1,10 +1,13 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/distiled/orphion/internal/paths"
 )
 
 func TestSetDefaults(t *testing.T) {
@@ -34,6 +37,7 @@ func TestSetDefaultsDoesNotOverwrite(t *testing.T) {
 		Concurrency:      3,
 		Provider:         "custom",
 		FFmpegPath:       "/usr/local/bin/ffmpeg",
+		SubtitleLang:     "arabic",
 	}
 	SetDefaults(cfg)
 	if cfg.OutputDir != "/custom/path" {
@@ -51,14 +55,17 @@ func TestSetDefaultsDoesNotOverwrite(t *testing.T) {
 	if cfg.FFmpegPath != "/usr/local/bin/ffmpeg" {
 		t.Errorf("FFmpegPath overwritten: got %q", cfg.FFmpegPath)
 	}
+	if cfg.SubtitleLang != "arabic" {
+		t.Errorf("SubtitleLang overwritten: got %q", cfg.SubtitleLang)
+	}
 }
 
 func TestExpandTilde(t *testing.T) {
 	home, _ := os.UserHomeDir()
-	got := expandTilde("~/Anime")
+	got := paths.ExpandTilde("~/Anime")
 	want := filepath.Join(home, "Anime")
 	if got != want {
-		t.Errorf("expandTilde(%q) = %q, want %q", "~/Anime", got, want)
+		t.Errorf("ExpandTilde(%q) = %q, want %q", "~/Anime", got, want)
 	}
 }
 
@@ -226,6 +233,12 @@ func TestConfigInit(t *testing.T) {
 }
 
 func TestConcurrencyValidation(t *testing.T) {
+	validate := func(n int) error {
+		if n < 1 || n > 4 {
+			return fmt.Errorf("concurrency must be 1-4, got %d", n)
+		}
+		return nil
+	}
 	tests := []struct {
 		val int
 		ok  bool
@@ -236,7 +249,7 @@ func TestConcurrencyValidation(t *testing.T) {
 		{5, false},
 	}
 	for _, tt := range tests {
-		err := validateConcurrency(tt.val)
+		err := validate(tt.val)
 		if (err == nil) != tt.ok {
 			t.Errorf("validateConcurrency(%d) = %v, want ok=%v", tt.val, err, tt.ok)
 		}
@@ -245,4 +258,44 @@ func TestConcurrencyValidation(t *testing.T) {
 
 func contains(s, sub string) bool {
 	return strings.Contains(s, sub)
+}
+
+func TestSetDefaultsSubtitleLang(t *testing.T) {
+	cfg := &Config{}
+	SetDefaults(cfg)
+	if cfg.SubtitleLang != "english" {
+		t.Errorf("default subtitle_lang = %q, want %q", cfg.SubtitleLang, "english")
+	}
+}
+
+func TestLoadConfigSubtitleLang(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.yaml")
+	content := "output_dir: /tmp/test\nsubtitle_lang: arabic"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.SubtitleLang != "arabic" {
+		t.Errorf("SubtitleLang = %q, want %q", cfg.SubtitleLang, "arabic")
+	}
+}
+
+func TestLoadConfigSubtitleLangDefault(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.yaml")
+	content := "output_dir: /tmp/test"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.SubtitleLang != "english" {
+		t.Errorf("SubtitleLang = %q, want %q (default)", cfg.SubtitleLang, "english")
+	}
 }

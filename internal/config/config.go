@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/distiled/orphion/internal/common"
+	"github.com/distiled/orphion/internal/paths"
 	"gopkg.in/yaml.v3"
 )
 
@@ -17,8 +19,7 @@ type Config struct {
 	Concurrency      int    `yaml:"concurrency"`
 	Provider         string `yaml:"provider"`
 	FFmpegPath       string `yaml:"ffmpeg_path"`
-
-	concurrencyExplicit bool
+	SubtitleLang     string `yaml:"subtitle_lang"`
 }
 
 // ErrConfigExists is returned when a configuration file already exists.
@@ -28,19 +29,22 @@ var ErrConfigExists = fmt.Errorf("configuration file already exists")
 // This is the single source of truth for all default values.
 func SetDefaults(cfg *Config) {
 	if cfg.OutputDir == "" {
-		cfg.OutputDir = "~/Anime"
+		cfg.OutputDir = common.DefaultOutputDir
 	}
 	if cfg.PreferredQuality == "" {
-		cfg.PreferredQuality = "1080p"
+		cfg.PreferredQuality = common.DefaultQuality
 	}
 	if cfg.Concurrency == 0 {
-		cfg.Concurrency = 1
+		cfg.Concurrency = common.DefaultConcurrency
 	}
 	if cfg.Provider == "" {
-		cfg.Provider = "allanime"
+		cfg.Provider = common.DefaultProvider
 	}
 	if cfg.FFmpegPath == "" {
-		cfg.FFmpegPath = "ffmpeg"
+		cfg.FFmpegPath = common.DefaultFFmpegPath
+	}
+	if cfg.SubtitleLang == "" {
+		cfg.SubtitleLang = common.DefaultSubtitleLang
 	}
 }
 
@@ -51,6 +55,7 @@ type raw struct {
 	Concurrency      *int    `yaml:"concurrency"`
 	Provider         *string `yaml:"provider"`
 	FFmpegPath       *string `yaml:"ffmpeg_path"`
+	SubtitleLang     *string `yaml:"subtitle_lang"`
 }
 
 // Load reads and validates a configuration YAML file.
@@ -100,30 +105,34 @@ func decode(data []byte, path string) (*Config, error) {
 	// Map raw -> Config. Apply defaults only for fields omitted from YAML.
 	cfg := &Config{}
 	if rawCfg.OutputDir != nil {
-		cfg.OutputDir = expandTilde(*rawCfg.OutputDir)
+		cfg.OutputDir = paths.ExpandTilde(*rawCfg.OutputDir)
 	} else {
-		cfg.OutputDir = "~/Anime"
+		cfg.OutputDir = common.DefaultOutputDir
 	}
 	if rawCfg.PreferredQuality != nil {
 		cfg.PreferredQuality = *rawCfg.PreferredQuality
 	} else {
-		cfg.PreferredQuality = "1080p"
+		cfg.PreferredQuality = common.DefaultQuality
 	}
 	if rawCfg.Concurrency != nil {
 		cfg.Concurrency = *rawCfg.Concurrency
-		cfg.concurrencyExplicit = true
 	} else {
-		cfg.Concurrency = 1
+		cfg.Concurrency = common.DefaultConcurrency
 	}
 	if rawCfg.Provider != nil {
 		cfg.Provider = *rawCfg.Provider
 	} else {
-		cfg.Provider = "allanime"
+		cfg.Provider = common.DefaultProvider
 	}
 	if rawCfg.FFmpegPath != nil {
 		cfg.FFmpegPath = *rawCfg.FFmpegPath
 	} else {
-		cfg.FFmpegPath = "ffmpeg"
+		cfg.FFmpegPath = common.DefaultFFmpegPath
+	}
+	if rawCfg.SubtitleLang != nil {
+		cfg.SubtitleLang = *rawCfg.SubtitleLang
+	} else {
+		cfg.SubtitleLang = common.DefaultSubtitleLang
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -141,13 +150,6 @@ func (c *Config) validate() error {
 	}
 	if c.FFmpegPath == "" {
 		return fmt.Errorf("ffmpeg_path is required")
-	}
-	return nil
-}
-
-func validateConcurrency(n int) error {
-	if n < 1 || n > 4 {
-		return fmt.Errorf("concurrency must be 1-4, got %d", n)
 	}
 	return nil
 }
@@ -180,19 +182,4 @@ func writeConfigFile(path string, cfg *Config) error {
 		return fmt.Errorf("write config %s: %w", path, err)
 	}
 	return nil
-}
-
-// expandTilde replaces a leading ~ with the user's home directory.
-func expandTilde(p string) string {
-	h, err := os.UserHomeDir()
-	if err != nil {
-		return p
-	}
-	if p == "~" {
-		return h
-	}
-	if len(p) > 1 && p[:2] == "~/" {
-		return filepath.Join(h, p[2:])
-	}
-	return p
 }

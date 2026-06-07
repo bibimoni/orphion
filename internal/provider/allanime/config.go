@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"net/url"
 	"time"
-)
 
-const defaultUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:150.0) Gecko/20100101 Firefox/150.0"
+	"github.com/distiled/orphion/internal/common"
+)
 
 // Config contains provider-owned upstream settings.
 type Config struct {
@@ -24,12 +24,12 @@ type Config struct {
 // DefaultConfig returns the production AllAnime configuration.
 func DefaultConfig() Config {
 	return Config{
-		APIURL:           "https://api.allanime.day/api",
-		SiteURL:          "https://youtu-chan.com",
-		MediaURL:         "https://allanime.day",
-		UserAgent:        defaultUserAgent,
-		EpisodeQueryHash: "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec",
-		Timeout:          30 * time.Second,
+		APIURL:           common.AllAnimeAPIURL,
+		SiteURL:          common.AllAnimeSiteURL,
+		MediaURL:         common.AllAnimeMediaURL,
+		UserAgent:        common.DefaultUserAgent,
+		EpisodeQueryHash: common.AllAnimeEpisodeQueryHash,
+		Timeout:          common.DefaultHTTPTimeout,
 	}
 }
 

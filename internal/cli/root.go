@@ -41,6 +41,7 @@ func New(service *app.Service) *cobra.Command {
 	root.AddCommand(newConfigCmd())
 	root.AddCommand(newSearchCmd(service))
 	root.AddCommand(newDownloadCmd(service))
+	root.AddCommand(newSubtitlesCmd(service))
 
 	return root
 }

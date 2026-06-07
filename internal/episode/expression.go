@@ -58,7 +58,7 @@ func (p *Parser) Parse(expr string) (*Request, error) {
 			if !validEpisodeNum(s.Start) || !validEpisodeNum(s.End) {
 				return nil, fmt.Errorf("invalid range %q in %q", part, expr)
 			}
-			if parseSortKey(s.Start) >= parseSortKey(s.End) {
+			if ParseSortKey(s.Start) >= ParseSortKey(s.End) {
 				return nil, fmt.Errorf("range %q must be increasing", part)
 			}
 		} else {
@@ -108,11 +108,11 @@ func Resolve(req *Request, episodes []Episode) []Episode {
 func matches(req *Request, ep Episode) bool {
 	key := ep.SortKey
 	if key == 0 {
-		key = parseSortKey(ep.Number)
+		key = ParseSortKey(ep.Number)
 	}
 	for _, seq := range req.Seqs {
-		start := parseSortKey(seq.Start)
-		end := parseSortKey(seq.End)
+		start := ParseSortKey(seq.Start)
+		end := ParseSortKey(seq.End)
 		if key >= start && key <= end {
 			return true
 		}
@@ -120,7 +120,8 @@ func matches(req *Request, ep Episode) bool {
 	return false
 }
 
-func parseSortKey(s string) float64 {
+// ParseSortKey parses an episode sort key from a string.
+func ParseSortKey(s string) float64 {
 	f, err := strconv.ParseFloat(s, 64)
 	if err != nil {
 		return -1
@@ -145,10 +146,10 @@ func AllNumbers(req *Request, episodes []Episode) []string {
 		for _, ep := range episodes {
 			key := ep.SortKey
 			if key == 0 {
-				key = parseSortKey(ep.Number)
+				key = ParseSortKey(ep.Number)
 			}
-			start := parseSortKey(seq.Start)
-			end := parseSortKey(seq.End)
+			start := ParseSortKey(seq.Start)
+			end := ParseSortKey(seq.End)
 			if key >= start && key <= end {
 				if !seen[ep.Number] {
 					seen[ep.Number] = true

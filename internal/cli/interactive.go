@@ -24,20 +24,27 @@ var imeArtifactRe = regexp.MustCompile(`(?i)^(?:alt\+|ctrl\+|meta\+|esc\b\s*)`)
 // backOption is the label used for the "go back" choice in select prompts.
 const backOption = "← Back"
 
+// optionStyle is a brighter style for select options so they don't
+// appear as grey text (pterm's ThemeDefault.DefaultText is FgDefault
+// which renders as grey on most terminals).
+var optionStyle = pterm.NewStyle(pterm.FgWhite)
+
 var interactiveSelect = func(options []string, defaultText string) (string, error) {
-	return pterm.DefaultInteractiveSelect.
+	s := pterm.DefaultInteractiveSelect.
 		WithOptions(options).
-		WithDefaultText(defaultText).
-		Show()
+		WithDefaultText(defaultText)
+	s.OptionStyle = optionStyle
+	return s.Show()
 }
 
 var interactiveMultiSelect = func(options []string, defaultText string) ([]string, error) {
-	return pterm.DefaultInteractiveMultiselect.
+	s := pterm.DefaultInteractiveMultiselect.
 		WithOptions(options).
 		WithDefaultText(defaultText).
 		WithCheckmark(&pterm.Checkmark{Checked: pterm.Green("✓"), Unchecked: " "}).
-		WithMaxHeight(8).
-		Show()
+		WithMaxHeight(8)
+	s.OptionStyle = optionStyle
+	return s.Show()
 }
 
 // setInteractiveRoot configures the root command for interactive mode when
@@ -56,18 +63,23 @@ func setInteractiveRoot(root *cobra.Command, service *app.Service) {
 type step int
 
 const (
-	stepSearch   step = iota // Search query input
-	stepProvider             // Provider selection
-	stepTitle                // Title selection from search results
-	stepSource               // Source/episode selection
-	stepConfig               // Config review
-	stepDownload             // Download (terminal step)
+	stepSearch    step = iota // Search query input
+	stepProvider              // Provider selection
+	stepTitle                 // Title selection from search results
+	stepSource                // Source/episode selection
+	stepConfig                // Config review
+	stepSubtitles             // Subtitle selection (before download)
+	stepDownload              // Download episodes + subtitles
 )
 
 func runInteractive(cmd *cobra.Command, service *app.Service) error {
 	ctx := cmd.Context()
 
+	// Clear the terminal screen (like ani-cli).
+	pterm.Print("\x1b[2J\x1b[H")
+
 	// Branded header.
+	pterm.Println()
 	_ = pterm.DefaultBigText.WithLetters(
 		putils.LettersFromStringWithStyle("Orphion", pterm.NewStyle(pterm.FgCyan)),
 	).Render()
@@ -80,6 +92,7 @@ func runInteractive(cmd *cobra.Command, service *app.Service) error {
 		selectedTitle    string
 		episodes         []provider.Episode
 		selectedEpisodes []provider.Episode
+		pendingSubResult *SubtitleFlowResult // selected subtitle + output dir from the flow
 	)
 
 	current := stepSearch
@@ -129,10 +142,11 @@ func runInteractive(cmd *cobra.Command, service *app.Service) error {
 				opts[i+1] = a.Title
 				titleToID[a.Title] = a.ID
 			}
-			selected, err := pterm.DefaultInteractiveSelect.
+			titleSel := pterm.DefaultInteractiveSelect.
 				WithOptions(opts).
-				WithDefaultText("Select title:").
-				Show()
+				WithDefaultText("Select title:")
+			titleSel.OptionStyle = optionStyle
+			selected, err := titleSel.Show()
 			if err != nil {
 				return fmt.Errorf("title selection: %w", err)
 			}
@@ -182,6 +196,18 @@ func runInteractive(cmd *cobra.Command, service *app.Service) error {
 				return fmt.Errorf("session config: %w", err)
 			}
 			applySessionConfig(service, sessCfg)
+			current = stepSubtitles
+
+		case stepSubtitles:
+			subResult, err := RunSubtitleFlow(ctx, service, SubtitleFlowConfig{
+				Query:   selectedTitle,
+				BaseDir: service.OutputDir(),
+			})
+			if err != nil {
+				pterm.Info.Printfln("Subtitle selection failed: %s", err)
+			} else if subResult != nil {
+				pendingSubResult = subResult
+			}
 			current = stepDownload
 
 		case stepDownload:
@@ -214,6 +240,18 @@ func runInteractive(cmd *cobra.Command, service *app.Service) error {
 			} else {
 				pterm.Success.Printfln("%d episode(s) downloaded", downloadResult.Completed)
 			}
+
+			// Download selected subtitle if one was chosen.
+			if pendingSubResult != nil && pendingSubResult.Subtitle != nil {
+				dlSpinner, _ := pterm.DefaultSpinner.Start("Downloading subtitle...")
+				extracted, err := service.DownloadSubtitle(ctx, *pendingSubResult.Subtitle, pendingSubResult.OutDir)
+				if err != nil {
+					dlSpinner.Fail(fmt.Sprintf("Subtitle download failed: %s", err))
+				} else {
+					dlSpinner.Success(fmt.Sprintf("Extracted %d subtitle file(s) to %s", len(extracted), pterm.LightBlue(pendingSubResult.OutDir)))
+				}
+			}
+
 			return nil
 		}
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/distiled/orphion/internal/ffmpeg"
 	"github.com/distiled/orphion/internal/paths"
 	"github.com/distiled/orphion/internal/provider"
+	"github.com/distiled/orphion/internal/subtitle"
 )
 
 type fakeProvider struct {
@@ -215,5 +216,120 @@ func TestService_ErrorPropagation(t *testing.T) {
 	_, err := svc.Search(context.Background(), "test", "anime")
 	if err == nil {
 		t.Fatal("expected error from provider")
+	}
+}
+
+// fakeSubtitleProvider implements subtitle.Provider for testing.
+type fakeSubtitleProvider struct {
+	results []subtitle.Result
+	page    *subtitle.PageResult
+	dlURL   string
+}
+
+func (f *fakeSubtitleProvider) Search(ctx context.Context, query string) ([]subtitle.Result, error) {
+	return f.results, nil
+}
+
+func (f *fakeSubtitleProvider) Page(ctx context.Context, sdID, slug, seasonSlug string) (*subtitle.PageResult, error) {
+	return f.page, nil
+}
+
+func (f *fakeSubtitleProvider) DownloadURL(sub subtitle.Subtitle) string {
+	return f.dlURL
+}
+
+func TestService_SubtitleProvider(t *testing.T) {
+	subProv := &fakeSubtitleProvider{
+		results: []subtitle.Result{
+			{ID: "sd1", Title: "Naruto", Type: "tv", Year: 2002, Slug: "naruto"},
+		},
+	}
+	r, _ := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	svc := New(&fakeProvider{}, r, Config{
+		Concurrency: 1,
+		SubtitleSrc: subProv,
+	})
+
+	if svc.SubtitleProvider() == nil {
+		t.Error("SubtitleProvider() = nil, want non-nil")
+	}
+}
+
+func TestService_SubtitleLang(t *testing.T) {
+	fp := &fakeProvider{}
+	svc := newTestService(fp)
+
+	// Default should be "english".
+	if got := svc.SubtitleLang(); got != "english" {
+		t.Errorf("SubtitleLang() = %q, want %q", got, "english")
+	}
+
+	svc.SetSubtitleLang("arabic")
+	if got := svc.SubtitleLang(); got != "arabic" {
+		t.Errorf("SubtitleLang() after Set = %q, want %q", got, "arabic")
+	}
+}
+
+func TestService_SearchSubtitles(t *testing.T) {
+	subProv := &fakeSubtitleProvider{
+		results: []subtitle.Result{
+			{ID: "sd1", Title: "Naruto", Type: "tv", Slug: "naruto"},
+		},
+	}
+	r, _ := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	svc := New(&fakeProvider{}, r, Config{
+		Concurrency: 1,
+		SubtitleSrc: subProv,
+	})
+
+	results, err := svc.SearchSubtitles(context.Background(), "naruto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Title != "Naruto" {
+		t.Errorf("SearchSubtitles() = %#v", results)
+	}
+}
+
+func TestService_SearchSubtitlesNoProvider(t *testing.T) {
+	svc := newTestService(&fakeProvider{})
+	_, err := svc.SearchSubtitles(context.Background(), "test")
+	if err == nil {
+		t.Error("expected error when subtitle provider not configured")
+	}
+}
+
+func TestService_SubtitlePage(t *testing.T) {
+	subProv := &fakeSubtitleProvider{
+		page: &subtitle.PageResult{
+			Seasons: []subtitle.Season{{Slug: "first-season", Name: "Season 1"}},
+			Subtitles: []subtitle.Subtitle{
+				{ID: 1, Language: "english", Link: "test.zip"},
+			},
+		},
+	}
+	r, _ := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	svc := New(&fakeProvider{}, r, Config{
+		Concurrency: 1,
+		SubtitleSrc: subProv,
+	})
+
+	page, err := svc.SubtitlePage(context.Background(), "sd1", "naruto", "first-season")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Seasons) != 1 {
+		t.Errorf("Seasons = %d, want 1", len(page.Seasons))
+	}
+	if len(page.Subtitles) != 1 {
+		t.Errorf("Subtitles = %d, want 1", len(page.Subtitles))
+	}
+}
+
+func TestService_DownloadSubtitleNoProvider(t *testing.T) {
+	svc := newTestService(&fakeProvider{})
+	_, err := svc.DownloadSubtitle(context.Background(), subtitle.Subtitle{ID: 1}, "/tmp")
+	if err == nil {
+		t.Error("expected error when subtitle provider not configured")
 	}
 }
