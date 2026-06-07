@@ -282,5 +282,3 @@ func listFolders(dir string) []string {
 	}
 	return names
 }
-
-
