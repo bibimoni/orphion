@@ -18,6 +18,7 @@ import (
 	"github.com/distiled/orphion/internal/ffmpeg"
 	"github.com/distiled/orphion/internal/paths"
 	"github.com/distiled/orphion/internal/provider"
+	"github.com/distiled/orphion/internal/provider/bettermelon"
 	"github.com/distiled/orphion/internal/quality"
 	"github.com/distiled/orphion/internal/subtitle"
 )
@@ -299,6 +300,9 @@ func (s *Service) executeJob(ctx context.Context, job download.Job) (string, err
 		s.progressCb(job.Episode, ffmpeg.Progress{})
 	}
 
+	// If the provider supports segment-level progress, wire it up
+	// so the UI shows "fetching segments 12/48" during HLS downloads.
+
 	streams, err := s.provider.Streams(ctx, job.ID)
 	if err != nil {
 		return "", fmt.Errorf("get streams: %w", err)
@@ -525,12 +529,22 @@ func parseSortKey(s string) float64 {
 	return val
 }
 
-// cleanupTempInput removes local temp files used as ffmpeg input
-// (e.g. bettermelon-*.ts segment caches downloaded by the provider).
+// cleanupTempInput removes local temp files/directories used as ffmpeg input
+// (e.g. bettermelon m3u8 temp directories created by the provider) and
+// closes any associated local HTTP servers used for segment proxying.
 func cleanupTempInput(streamURL string) {
 	if !strings.HasPrefix(streamURL, "file://") {
 		return
 	}
+	// Close the local segment proxy server if one was started.
+	bettermelon.CloseSegmentServers(streamURL)
+
 	path := streamURL[len("file://"):]
+	// If the temp file is inside a bettermelon-m3u8 directory, remove the whole directory.
+	dir := filepath.Dir(path)
+	if strings.Contains(filepath.Base(dir), "bettermelon-m3u8") {
+		_ = os.RemoveAll(dir)
+		return
+	}
 	_ = os.Remove(path)
 }

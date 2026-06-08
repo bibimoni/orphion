@@ -1,6 +1,7 @@
 package bettermelon
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -8,11 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
-	"regexp"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,12 +26,6 @@ import (
 
 // availableProviders is the list of upstream Bettermelon providers in fallback order.
 var availableProviders = []string{"hianime", "animekai", "kickassanime", "anikoto"}
-
-// uriPattern matches URI="..." inside HLS tags like #EXT-X-I-FRAME-STREAM-INF.
-var uriPattern = regexp.MustCompile(`URI="[^"]*"`)
-
-// segmentWorkers is the number of concurrent segment downloads.
-const segmentWorkers = 16
 
 // episodeRef encodes the opaque episode identifier used between Episodes and Streams.
 type episodeRef struct {
@@ -54,7 +49,7 @@ func (e redactedRequestError) Unwrap() error {
 
 // Client fetches and normalizes Bettermelon data.
 type Client struct {
-	httpClient *http.Client
+	httpClient *http.Client // for API calls (short timeout)
 	apiURL     *url.URL
 	proxyURL   *url.URL
 	userAgent  string
@@ -286,32 +281,54 @@ func (c *Client) Streams(ctx context.Context, episodeID string) ([]provider.Stre
 }
 
 // fetchJSON performs a GET request against the Bettermelon API and decodes the JSON response.
+// It retries up to 2 times on transient server errors (5xx).
 func (c *Client) fetchJSON(ctx context.Context, path string, out any) error {
 	endpoint := c.apiURL.JoinPath(path)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", c.userAgent)
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("request: %w", redactedRequestError{err: err})
-	}
-	defer func() { _ = resp.Body.Close() }()
+	var lastErr error
+	for attempt := range 3 {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
+			}
+		}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("upstream status %d", resp.StatusCode)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+		if err != nil {
+			return fmt.Errorf("create request: %w", err)
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("User-Agent", c.userAgent)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("request: %w", redactedRequestError{err: err})
+			continue
+		}
+
+		if resp.StatusCode >= 500 {
+			_ = resp.Body.Close()
+			lastErr = fmt.Errorf("upstream status %d", resp.StatusCode)
+			continue // retry on 5xx
+		}
+
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return fmt.Errorf("upstream status %d", resp.StatusCode)
+		}
+		body, err := io.ReadAll(io.LimitReader(resp.Body, common.MaxResponseSize))
+		if err != nil {
+			return fmt.Errorf("read response: %w", err)
+		}
+		if err := json.Unmarshal(body, out); err != nil {
+			return fmt.Errorf("decode response: %w", err)
+		}
+		return nil
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, common.MaxResponseSize))
-	if err != nil {
-		return fmt.Errorf("read response: %w", err)
-	}
-	if err := json.Unmarshal(body, out); err != nil {
-		return fmt.Errorf("decode response: %w", err)
-	}
-	return nil
+	return lastErr
 }
 
 // fetchStream fetches streaming data for a specific anime/episode/provider combination.
@@ -420,40 +437,49 @@ func (r *streamResponse) animeTitle() string {
 }
 
 // streams converts the stream response into provider.Stream objects.
-func (r *streamResponse) streams(ctx context.Context, client *Client) []provider.Stream {
-	return client.buildStreams(ctx, r.Data.Episode.Sources.Sources.File)
+func (r *streamResponse) streams(_ context.Context, client *Client) []provider.Stream {
+	return client.buildStreams(r.Data.Episode.Sources.Sources.File)
 }
 
 // buildStreams converts a CDN m3u8 URL into a downloadable stream.
-// It downloads the HLS manifest, rewrites obfuscated segment URLs
-// with a #/seg.ts hint for ffmpeg, and writes a local temp file.
-func (c *Client) buildStreams(ctx context.Context, fileURL string) []provider.Stream {
+// It downloads the m3u8 manifest and all segments to local temp files
+// with .ts extensions, so ffmpeg can correctly identify them as MPEG-TS.
+// The CDN disguises segments with fake extensions (.jpg, .html, .js, etc.)
+// which causes ffmpeg to misidentify the format.
+func (c *Client) buildStreams(fileURL string) []provider.Stream {
 	if fileURL == "" {
 		return nil
 	}
-	localTS, err := c.downloadSegments(ctx, fileURL)
-	if err != nil {
-		log.Printf("bettermelon: downloadSegments failed, falling back to proxy URL: %v", err)
-		// Fallback: return the raw proxy URL (may fail with obfuscated extensions).
-		proxied := c.proxiedURL(fileURL)
+
+	// Try to create a local rewritten m3u8 for ffmpeg.
+	localURL := c.rewriteM3U8(fileURL)
+	if localURL != "" {
 		headers := make(http.Header)
 		headers.Set("Referer", "https://bettermelon.ru/")
 		headers.Set("User-Agent", c.userAgent)
-		return []provider.Stream{{URL: proxied, Quality: "", Headers: headers}}
+		return []provider.Stream{{URL: localURL, Quality: "", Headers: headers}}
 	}
+
+	// Fallback: return the proxied URL directly.
+	proxied := c.proxiedURL(fileURL)
 	headers := make(http.Header)
 	headers.Set("Referer", "https://bettermelon.ru/")
 	headers.Set("User-Agent", c.userAgent)
-	return []provider.Stream{{URL: localTS, Quality: "", Headers: headers}}
+	return []provider.Stream{{URL: proxied, Quality: "", Headers: headers}}
 }
 
 // proxiedURL rewrites a CDN URL through the Bettermelon proxy.
+// If the URL is already on the proxy host, it is returned as-is to avoid double-proxying.
 func (c *Client) proxiedURL(rawURL string) string {
 	if c.proxyURL == nil {
 		return rawURL
 	}
 	parsed, err := url.Parse(rawURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return rawURL
+	}
+	// Already on the proxy host — don't double-proxy.
+	if parsed.Host == c.proxyURL.Host {
 		return rawURL
 	}
 	proxy := *c.proxyURL
@@ -464,252 +490,316 @@ func (c *Client) proxiedURL(rawURL string) string {
 	return proxy.String()
 }
 
-// downloadSegments downloads all HLS segments in parallel through the proxy,
-// concatenates them into a single MPEG-TS temp file, and returns a file:// URL.
-// This is much faster than ffmpeg's sequential HLS fetcher since segments
-// are downloaded concurrently with 8 workers.
-func (c *Client) downloadSegments(ctx context.Context, masterURL string) (string, error) {
-	proxiedMaster := c.proxiedURL(masterURL)
-	masterContent, err := c.fetchRaw(ctx, proxiedMaster)
+// rewriteM3U8 fetches the m3u8 manifest (and any sub-playlists) via the
+// proxy, rewrites segment URLs to point through a local HTTP server that
+// serves them with .ts extensions, and writes a local temp m3u8 file.
+// Returns a file:// URL or empty string on error.
+// All temp files are placed in a single temp directory so cleanupTempInput
+// can remove them all at once.
+func (c *Client) rewriteM3U8(fileURL string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// The manifest is fetched via the proxy, so any relative URLs inside it
+	// are relative to the proxy URL — not the original CDN URL.
+	// We must pass the proxy URL as the base for URL resolution.
+	proxyBase := c.proxiedURL(fileURL)
+
+	manifest, err := c.fetchViaProxy(ctx, fileURL)
 	if err != nil {
-		return "", fmt.Errorf("fetch master m3u8: %w", err)
+		fmt.Fprintf(os.Stderr, "rewriteM3U8: fetchViaProxy failed: %v\n", err)
+		return ""
 	}
 
-	// Rewrite the master manifest: make sub-manifest URLs absolute.
-	rewritten := c.rewriteManifestContent(string(masterContent), proxiedMaster)
-
-	// If the master has no segment lines (only sub-manifest references),
-	// also fetch and inline the sub-manifests.
-	if !strings.Contains(rewritten, "#EXTINF:") {
-		rewritten, err = c.inlineSubManifests(ctx, rewritten, proxiedMaster)
-		if err != nil {
-			return "", fmt.Errorf("inline sub-manifests: %w", err)
-		}
-	}
-
-	// Extract segment URLs in order.
-	segments := c.extractSegmentURLs(rewritten)
-	if len(segments) == 0 {
-		return "", fmt.Errorf("no segments found in manifest")
-	}
-
-	// Download segments in parallel and write to a temp .ts file.
-	f, err := os.CreateTemp("", "bettermelon-*.ts")
+	// Create a temp directory for all m3u8 files (master + sub-playlists).
+	tmpDir, err := os.MkdirTemp("", "bettermelon-m3u8")
 	if err != nil {
-		return "", fmt.Errorf("create temp ts: %w", err)
-	}
-	tsPath := f.Name()
-
-	// Download all segments using a worker pool.
-	type segResult struct {
-		index int
-		data  []byte
-		err   error
-	}
-	jobs := make(chan int, len(segments))
-	results := make(chan segResult, len(segments))
-
-	var wg sync.WaitGroup
-	for i := 0; i < segmentWorkers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for idx := range jobs {
-				segURL := segments[idx]
-				// Strip the #/seg.ts fragment if present (not needed for raw HTTP).
-				if hashIdx := strings.Index(segURL, "#"); hashIdx > 0 {
-					segURL = segURL[:hashIdx]
-				}
-				data, err := c.fetchRaw(ctx, segURL)
-				if err != nil {
-					select {
-					case results <- segResult{index: idx, err: err}:
-					case <-ctx.Done():
-					}
-					continue
-				}
-				select {
-				case results <- segResult{index: idx, data: data}:
-				case <-ctx.Done():
-				}
-			}
-		}()
+		fmt.Fprintf(os.Stderr, "rewriteM3U8: MkdirTemp failed: %v\n", err)
+		return ""
 	}
 
-	// Enqueue all segment indices.
-	go func() {
-		for i := range segments {
-			select {
-			case jobs <- i:
-			case <-ctx.Done():
-				return
-			}
-		}
-		close(jobs)
-	}()
+	// Start a local HTTP server that proxies segment requests.
+	// Segments are served with .ts extension so ffmpeg identifies them as
+	// MPEG-TS, but the server fetches them from the CDN with their original
+	// fake extension (.jpg, .html, etc.).
+	segMap := &segmentProxyMap{urls: make(map[string]string)}
+	srv := httptest.NewServer(segMap.handler(c.httpClient, c.userAgent, c.proxyURL))
 
-	// Collect results in a goroutine.
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	// Assemble segments in order.
-	buffers := make([][]byte, len(segments))
-	var firstErr error
-	for res := range results {
-		if res.err != nil && firstErr == nil {
-			firstErr = res.err
-		}
-		if res.data != nil {
-			buffers[res.index] = res.data
-		}
-	}
-	if firstErr != nil {
-		_ = f.Close()
-		_ = os.Remove(tsPath)
-		return "", fmt.Errorf("download segment: %w", firstErr)
+	rewritten, err := c.rewritePlaylist(ctx, manifest, proxyBase, tmpDir, srv.URL, segMap)
+	if err != nil {
+		srv.Close()
+		fmt.Fprintf(os.Stderr, "rewriteM3U8: rewritePlaylist failed: %v\n", err)
+		_ = os.RemoveAll(tmpDir)
+		return ""
 	}
 
-	// Write all segments in order to the temp file.
-	for _, buf := range buffers {
-		if buf == nil {
-			_ = f.Close()
-			_ = os.Remove(tsPath)
-			return "", fmt.Errorf("missing segment data")
-		}
-		if _, err := f.Write(buf); err != nil {
-			_ = f.Close()
-			_ = os.Remove(tsPath)
-			return "", fmt.Errorf("write segment: %w", err)
-		}
+	// Write the master playlist.
+	masterPath := tmpDir + "/master.m3u8"
+	if err := os.WriteFile(masterPath, []byte(rewritten), 0o644); err != nil {
+		srv.Close()
+		fmt.Fprintf(os.Stderr, "rewriteM3U8: WriteFile failed: %v\n", err)
+		_ = os.RemoveAll(tmpDir)
+		return ""
 	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tsPath)
-		return "", fmt.Errorf("close temp ts: %w", err)
-	}
-	return "file://" + tsPath, nil
+
+	// Register the server so it stays alive until CloseSegmentServers is called
+	// after ffmpeg finishes.
+	activeSrvMu.Lock()
+	activeSrvs[tmpDir] = srv
+	activeSrvMu.Unlock()
+
+	return "file://" + masterPath
 }
 
-// fetchRaw performs a GET request and returns the response body as bytes.
-func (c *Client) fetchRaw(ctx context.Context, rawURL string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+// rewritePlaylist processes an m3u8 playlist: for master playlists it
+// rewrites sub-playlist URLs to absolute proxy URLs; for media playlists
+// it rewrites segment URLs to point through a local HTTP server that
+// serves them with .ts extensions. Sub-playlists are written to tmpDir.
+func (c *Client) rewritePlaylist(ctx context.Context, body, sourceURL, tmpDir, localSrv string, segMap *segmentProxyMap) (string, error) {
+	var out strings.Builder
+	scanner := bufio.NewScanner(strings.NewReader(body))
+	subIdx := 0
+	segIdx := 0
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Skip comments/directives.
+		if strings.HasPrefix(line, "#") {
+			// Handle #EXT-X-KEY or #EXT-X-MAP that may contain URIs.
+			if strings.Contains(line, "URI=") {
+				line = c.rewriteURIsInDirective(line)
+			}
+			out.WriteString(line)
+			out.WriteByte('\n')
+			continue
+		}
+
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			out.WriteByte('\n')
+			continue
+		}
+
+		// Resolve relative URLs against the source playlist URL.
+		absURL := c.resolveAgainst(trimmed, sourceURL)
+
+		// If this is a sub-playlist reference (.m3u8), fetch and inline-rewrite it.
+		// Check the resolved absolute URL for .m3u8 (not the raw line, which may
+		// be a relative /proxy?url=... path containing .m3u8 in a query param).
+		if strings.HasSuffix(absURL, ".m3u8") || strings.Contains(absURL, ".m3u8?") ||
+			strings.Contains(absURL, ".m3u8&") {
+			subManifest, err := c.fetchViaProxy(ctx, absURL)
+			if err != nil {
+				return "", fmt.Errorf("fetch sub-playlist %s: %w", trimmed, err)
+			}
+			subRewritten, err := c.rewritePlaylist(ctx, subManifest, absURL, tmpDir, localSrv, segMap)
+			if err != nil {
+				return "", fmt.Errorf("rewrite sub-playlist %s: %w", trimmed, err)
+			}
+			// Write the sub-playlist to a file in the temp directory.
+			subPath := fmt.Sprintf("%s/sub-%d.m3u8", tmpDir, subIdx)
+			subIdx++
+			if err := os.WriteFile(subPath, []byte(subRewritten), 0o644); err != nil {
+				return "", err
+			}
+			out.WriteString("file://" + subPath)
+			out.WriteByte('\n')
+			continue
+		}
+
+		// It's a segment URL — register it with the local segment proxy
+		// so ffmpeg can fetch it with a .ts extension. The CDN uses fake
+		// extensions (.jpg, .html) that ffmpeg misidentifies as mjpeg/html.
+		segIdx++
+		segKey := fmt.Sprintf("%d.ts", segIdx)
+		segMap.Register(segKey, absURL)
+		out.WriteString(localSrv + "/seg/" + segKey)
+		out.WriteByte('\n')
 	}
+	return out.String(), nil
+}
+
+// rewriteURIsInDirective rewrites URI= values in HLS directives (like
+// #EXT-X-KEY) to absolute proxy URLs.
+func (c *Client) rewriteURIsInDirective(line string) string {
+	uriStart := strings.Index(line, `URI="`)
+	if uriStart < 0 {
+		return line
+	}
+	uriStart += 5 // skip URI="
+	uriEnd := strings.Index(line[uriStart:], `"`)
+	if uriEnd < 0 {
+		return line
+	}
+	origURI := line[uriStart : uriStart+uriEnd]
+	proxied := c.proxiedURL(origURI)
+	return line[:uriStart] + proxied + line[uriStart+uriEnd:]
+}
+
+// resolveAgainst resolves a potentially relative URL against a base URL.
+func (c *Client) resolveAgainst(ref, base string) string {
+	// If ref is already absolute, return as-is.
+	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
+		return ref
+	}
+	baseParsed, err := url.Parse(base)
+	if err != nil {
+		return ref
+	}
+	refParsed, err := url.Parse(ref)
+	if err != nil {
+		return ref
+	}
+	return baseParsed.ResolveReference(refParsed).String()
+}
+
+// fetchViaProxy fetches a URL through the Bettermelon proxy.
+func (c *Client) fetchViaProxy(ctx context.Context, rawURL string) (string, error) {
+	proxied := c.proxiedURL(rawURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, proxied, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "*/*")
 	req.Header.Set("User-Agent", c.userAgent)
 	req.Header.Set("Referer", "https://bettermelon.ru/")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request: %w", redactedRequestError{err: err})
+		return "", err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("upstream status %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("status %d", resp.StatusCode)
 	}
+
 	body, err := io.ReadAll(io.LimitReader(resp.Body, common.MaxResponseSize))
 	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
+		return "", err
 	}
-	return body, nil
+	return string(body), nil
 }
 
-// inlineSubManifests fetches sub-manifests referenced in a master m3u8
-// and replaces them with their inlined segment lines.
-func (c *Client) inlineSubManifests(ctx context.Context, content, baseURL string) (string, error) {
-	var out strings.Builder
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		// If this line is a URL (not a tag, not empty), try fetching it as a sub-manifest.
-		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
-			subContent, err := c.fetchRaw(ctx, trimmed)
-			if err != nil {
-				// Can't fetch sub-manifest; keep original line.
-				out.WriteString(line)
-				out.WriteByte('\n')
-				continue
-			}
-			rewritten := c.rewriteManifestContent(string(subContent), trimmed)
-			out.WriteString(rewritten)
-			out.WriteByte('\n')
-			continue
-		}
-		out.WriteString(line)
-		out.WriteByte('\n')
+// activeServers tracks local HTTP servers created for segment proxying,
+// keyed by temp directory path. They are closed by CloseSegmentServers.
+var (
+	activeSrvMu sync.Mutex
+	activeSrvs  = make(map[string]*httptest.Server)
+)
+
+// CloseSegmentServers closes the local HTTP server(s) associated with the
+// given stream URL's temp directory. Called by the service layer after
+// ffmpeg finishes downloading.
+func CloseSegmentServers(streamURL string) {
+	if !strings.HasPrefix(streamURL, "file://") {
+		return
 	}
-	return strings.TrimRight(out.String(), "\n"), nil
+	path := streamURL[len("file://"):]
+	dir := filepath.Dir(path)
+	if !strings.Contains(filepath.Base(dir), "bettermelon-m3u8") {
+		return
+	}
+	activeSrvMu.Lock()
+	srv, ok := activeSrvs[dir]
+	if ok {
+		delete(activeSrvs, dir)
+	}
+	activeSrvMu.Unlock()
+	if ok {
+		srv.Close()
+	}
 }
 
-// extractSegmentURLs returns the ordered list of segment URLs from an m3u8 manifest.
-func (c *Client) extractSegmentURLs(content string) []string {
-	var segments []string
-	lines := strings.Split(content, "\n")
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
-			// This is a segment URL. Make sure it's absolute.
-			_ = i // unused
-			segments = append(segments, trimmed)
-		}
-	}
-	return segments
+// segmentProxyMap maps .ts segment keys (e.g. "1.ts") to their real CDN URLs.
+// It also serves as an http.Handler that proxies segment requests, fetching
+// the real URL through the Bettermelon proxy and streaming the response back
+// to ffmpeg (which sees .ts extension and correctly identifies MPEG-TS).
+type segmentProxyMap struct {
+	mu   sync.RWMutex
+	urls map[string]string // key -> real proxy URL
 }
 
-// rewriteManifestContent makes relative URLs absolute in an m3u8 manifest.
-func (c *Client) rewriteManifestContent(content, baseURL string) string {
-	base, err := url.Parse(baseURL)
-	if err != nil {
-		return content
-	}
-	var lines []string
-	for _, line := range strings.Split(content, "\n") {
-		trimmed := strings.TrimSpace(line)
-		// Rewrite lines that contain URLs (not tags, not empty).
-		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
-			if resolved := resolveURL(base, trimmed); resolved != "" {
-				lines = append(lines, resolved)
-				continue
-			}
-		}
-		// Rewrite URI= inside #EXT-X-I-FRAME-STREAM-INF or #EXT-X-MEDIA.
-		if strings.Contains(trimmed, `URI="`) {
-			lines = append(lines, c.rewriteURIAttribute(trimmed, base))
-			continue
-		}
-		lines = append(lines, line)
-	}
-	return strings.Join(lines, "\n")
+// Register adds a segment key -> real URL mapping.
+func (m *segmentProxyMap) Register(key, realURL string) {
+	m.mu.Lock()
+	m.urls[key] = realURL
+	m.mu.Unlock()
 }
 
-// rewriteURIAttribute rewrites URI="..." inside a tag line.
-func (c *Client) rewriteURIAttribute(line string, base *url.URL) string {
-	return uriPattern.ReplaceAllStringFunc(line, func(match string) string {
-		uriStart := strings.Index(match, `"`) + 1
-		uriEnd := strings.LastIndex(match, `"`)
-		if uriStart >= uriEnd {
-			return match
+// handler returns an http.Handler that serves segments on-demand.
+// When ffmpeg requests /seg/1.ts, the handler looks up the real URL
+// and proxies the request through the Bettermelon proxy.
+func (m *segmentProxyMap) handler(httpClient *http.Client, userAgent string, proxyURL *url.URL) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Extract segment key from path: /seg/1.ts → "1.ts"
+		key := strings.TrimPrefix(r.URL.Path, "/seg/")
+		if key == "" {
+			http.NotFound(w, r)
+			return
 		}
-		uri := match[uriStart:uriEnd]
-		if resolved := resolveURL(base, uri); resolved != "" {
-			return match[:uriStart] + resolved + match[uriEnd:]
+
+		m.mu.RLock()
+		realURL, ok := m.urls[key]
+		m.mu.RUnlock()
+
+		if !ok {
+			http.NotFound(w, r)
+			return
 		}
-		return match
-	})
+
+		// Build the proxy URL for this segment.
+		proxied := proxiedURLFromURL(realURL, proxyURL)
+
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, proxied, nil)
+		if err != nil {
+			http.Error(w, "bad request", http.StatusInternalServerError)
+			return
+		}
+		req.Header.Set("Accept", "*/*")
+		req.Header.Set("User-Agent", userAgent)
+		req.Header.Set("Referer", "https://bettermelon.ru/")
+
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			http.Error(w, "upstream error", http.StatusBadGateway)
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			http.Error(w, "upstream error", resp.StatusCode)
+			return
+		}
+
+		// Stream the segment data back to ffmpeg.
+		w.Header().Set("Content-Type", "video/mp2t")
+		if resp.ContentLength > 0 {
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", resp.ContentLength))
+		}
+		_, _ = io.Copy(w, io.LimitReader(resp.Body, 50*1024*1024)) // 50MB max
+	}
 }
 
-// resolveURL resolves a possibly-relative URL against a base URL.
-func resolveURL(base *url.URL, ref string) string {
-	u, err := url.Parse(ref)
-	if err != nil {
-		return ""
+// proxiedURLFromURL builds a proxy URL from a real URL and proxy base.
+// This is a standalone version of Client.proxiedURL that doesn't need a Client.
+func proxiedURLFromURL(rawURL string, proxyURL *url.URL) string {
+	if proxyURL == nil {
+		return rawURL
 	}
-	if u.Scheme == "" {
-		return base.ResolveReference(u).String()
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return rawURL
 	}
-	return ref
+	if parsed.Host == proxyURL.Host {
+		return rawURL
+	}
+	proxy := *proxyURL
+	q := proxy.Query()
+	q.Set("url", parsed.String())
+	proxy.RawQuery = q.Encode()
+	proxy.Path = "/proxy"
+	return proxy.String()
 }
 
 // ── Episode ID encoding ─────────────────────────────────────────────────

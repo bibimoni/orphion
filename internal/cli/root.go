@@ -260,6 +260,14 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 }
 
 func formatProgressLine(episode string, progress ffmpeg.Progress) string {
+	// Segment download phase (bettermelon and similar HLS providers).
+	if progress.Phase == "segments" && progress.SegmentsTotal > 0 {
+		pct := float64(progress.SegmentsDone) / float64(progress.SegmentsTotal) * 100
+		bar := progressBar(progress.SegmentsDone, progress.SegmentsTotal, 20)
+		return fmt.Sprintf("%s Episode %s  %s %d/%d segments (%.0f%%)",
+			pterm.Cyan("↓"), episode, bar, progress.SegmentsDone, progress.SegmentsTotal, pct)
+	}
+
 	if progress.Speed == "" && progress.Bytes == 0 && progress.TotalBytes == 0 {
 		return fmt.Sprintf("%s Episode %s  connecting...",
 			pterm.Cyan("↓"), episode)
@@ -277,6 +285,19 @@ func formatProgressLine(episode string, progress ffmpeg.Progress) string {
 
 	return fmt.Sprintf("%s Episode %s  %s/s  %s",
 		pterm.Cyan("↓"), episode, pterm.Yellow(speed), size)
+}
+
+// progressBar renders a text progress bar like [████░░░░░░].
+func progressBar(done, total, width int) string {
+	if total <= 0 {
+		return ""
+	}
+	filled := int(float64(done) / float64(total) * float64(width))
+	if filled > width {
+		filled = width
+	}
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
+	return pterm.Cyan("[") + bar + pterm.Cyan("]")
 }
 
 // formatBytes returns a human-readable byte string.
