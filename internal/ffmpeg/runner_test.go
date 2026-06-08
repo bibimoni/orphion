@@ -20,16 +20,30 @@ func TestRunnerArgs(t *testing.T) {
 	// Check critical flags.
 	hasCopy := false
 	hasStdin := false
-	for _, a := range args {
+	hasMapV := false
+	hasMapA := false
+	for i, a := range args {
 		if a == "-c" {
 			hasCopy = true
 		}
 		if a == "-nostdin" {
 			hasStdin = true
 		}
+		if a == "-map" && i+1 < len(args) && args[i+1] == "0:v?" {
+			hasMapV = true
+		}
+		if a == "-map" && i+1 < len(args) && args[i+1] == "0:a?" {
+			hasMapA = true
+		}
 	}
 	if !hasCopy || !hasStdin {
 		t.Error("missing critical args")
+	}
+	if !hasMapV {
+		t.Error("missing -map 0:v? (optional video map)")
+	}
+	if !hasMapA {
+		t.Error("missing -map 0:a? (optional audio map)")
 	}
 }
 

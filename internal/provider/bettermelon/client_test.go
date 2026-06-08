@@ -27,7 +27,7 @@ func testClient(t *testing.T, transport roundTripFunc) *Client {
 	t.Helper()
 	cfg := DefaultConfig()
 	cfg.APIURL = "https://api.example.test"
-	cfg.ProxyURL = "https://proxy.example.test"
+	cfg.ProxyURL = "https://api.example.test" // same host so mock intercepts proxy calls too
 	cfg.HTTPClient = &http.Client{Transport: transport}
 	client, err := NewClient(cfg)
 	if err != nil {
@@ -260,8 +260,8 @@ func TestEpisodesDefaultTitleWhenCanonicalEmpty(t *testing.T) {
 
 func TestStreamsReturnsM3U8WithHeaders(t *testing.T) {
 	client := testClient(t, func(req *http.Request) (*http.Response, error) {
-		switch req.URL.Path {
-		case "/anime/154587/1/hianime":
+		switch {
+		case strings.HasPrefix(req.URL.Path, "/anime/154587/1/"):
 			return jsonResponse(http.StatusOK, `{
 				"success": true,
 				"data": {
@@ -270,20 +270,19 @@ func TestStreamsReturnsM3U8WithHeaders(t *testing.T) {
 					"episode": {
 						"sources": {
 							"type": "SOFT",
-							"sources": {"file": "https://cdn.example.test/anime/master.m3u8"},
-							"tracks": [{"file": "https://proxy.example.test/sub.vtt", "label": "English", "kind": "captions", "default": true}]
+							"sources": {"file": "https://cdn.example.test/anime/master.m3u8"}
 						}
 					}
 				}
 			}`), nil
-		case "/proxy":
-			// Serve the m3u8 manifest and segment data.
+		case req.URL.Path == "/proxy":
 			urlParam := req.URL.Query().Get("url")
-			if strings.Contains(urlParam, ".m3u8") {
-				return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nhttps://proxy.example.test/proxy?url=https://cdn.example.test/seg1.ts\n#EXTINF:10,\nhttps://proxy.example.test/proxy?url=https://cdn.example.test/seg2.ts\n#EXT-X-ENDLIST"), nil
+			if strings.Contains(urlParam, "index-") {
+				// Sub-playlist with segments using fake extensions.
+				return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\n/proxy?url=https://cdn.example.test/seg1.jpg\n#EXT-X-ENDLIST"), nil
 			}
-			// Segment data: return a small valid MPEG-TS packet.
-			return jsonResponse(http.StatusOK, "segment-data"), nil
+			// Master playlist pointing to sub-playlist.
+			return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1800000\n/proxy?url=https://cdn.example.test/anime/index-f1.m3u8\n"), nil
 		default:
 			t.Fatalf("unexpected path = %s", req.URL.Path)
 			return nil, nil
@@ -298,12 +297,12 @@ func TestStreamsReturnsM3U8WithHeaders(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("len(Streams()) = %d", len(got))
 	}
-	// Stream URL should be a local file (from downloadSegments).
+	// Stream URL should be a local file:// (rewritten m3u8).
 	if !strings.HasPrefix(got[0].URL, "file://") {
-		t.Fatalf("URL = %q, want local file:// URL", got[0].URL)
+		t.Fatalf("URL = %q, want file:// URL", got[0].URL)
 	}
-	if !strings.HasSuffix(got[0].URL, ".ts") {
-		t.Fatalf("URL = %q, want .ts extension", got[0].URL)
+	if !strings.HasSuffix(got[0].URL, ".m3u8") {
+		t.Fatalf("URL = %q, want .m3u8 extension", got[0].URL)
 	}
 	if got[0].Headers.Get("Referer") == "" {
 		t.Fatal("missing Referer header")
@@ -314,14 +313,15 @@ func TestStreamsReturnsM3U8WithHeaders(t *testing.T) {
 }
 
 func TestStreamsTriesFallbackProviders(t *testing.T) {
-	requests := 0
+	hianimeAttempts := 0
 	client := testClient(t, func(req *http.Request) (*http.Response, error) {
-		requests++
 		path := req.URL.Path
 		switch {
-		case requests == 1 && path == "/anime/154587/1/hianime":
+		case path == "/anime/154587/1/hianime":
+			hianimeAttempts++
 			return jsonResponse(http.StatusBadGateway, "error"), nil
-		case requests == 2 && path == "/anime/154587/1/animekai":
+		case strings.HasPrefix(path, "/anime/154587/1/"):
+			// Any other provider returns a working stream.
 			return jsonResponse(http.StatusOK, `{
 				"success": true,
 				"data": {
@@ -334,12 +334,12 @@ func TestStreamsTriesFallbackProviders(t *testing.T) {
 			}`), nil
 		case path == "/proxy":
 			urlParam := req.URL.Query().Get("url")
-			if strings.Contains(urlParam, ".m3u8") {
-				return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nhttps://proxy.example.test/proxy?url=https://cdn.example.test/seg1.ts\n#EXT-X-ENDLIST"), nil
+			if strings.Contains(urlParam, "index-") {
+				return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nseg1.ts\n#EXT-X-ENDLIST"), nil
 			}
-			return jsonResponse(http.StatusOK, "segment"), nil
+			return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1800000\n/proxy?url=https://cdn.example.test/index-f1.m3u8\n"), nil
 		default:
-			t.Fatalf("unexpected request %d to %s", requests, path)
+			t.Fatalf("unexpected request to %s", path)
 			return nil, nil
 		}
 	})
@@ -349,14 +349,19 @@ func TestStreamsTriesFallbackProviders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Fallback provider returns a local rewritten m3u8.
 	if len(got) != 1 || !strings.HasPrefix(got[0].URL, "file://") {
 		t.Fatalf("Streams() = %#v", got)
+	}
+	if hianimeAttempts != 3 {
+		t.Fatalf("hianime attempts = %d, want 3 (with retries)", hianimeAttempts)
 	}
 }
 
 func TestStreamsAllProvidersFail(t *testing.T) {
 	client := testClient(t, func(req *http.Request) (*http.Response, error) {
-		return jsonResponse(http.StatusBadGateway, "error"), nil
+		// Return 403 (not 5xx) so retries are skipped and providers fail fast.
+		return jsonResponse(http.StatusForbidden, "error"), nil
 	})
 
 	episodeID := encodeEpisodeID(episodeRef{AniListID: "1", Number: "1", Provider: "hianime"})
@@ -380,7 +385,8 @@ func TestStreamsInvalidEpisodeID(t *testing.T) {
 
 func TestHTTPStatusErrorsDoNotLeakURLs(t *testing.T) {
 	client := testClient(t, func(req *http.Request) (*http.Response, error) {
-		return jsonResponse(http.StatusBadGateway, `signed=https://secret.example/token`), nil
+		// Use 403 (not 5xx) to avoid slow retries in tests.
+		return jsonResponse(http.StatusForbidden, `signed=https://secret.example/token`), nil
 	})
 
 	_, err := client.Search(context.Background(), "154587", "anime")
@@ -533,10 +539,10 @@ func TestStreamsCDNURLIsProxied(t *testing.T) {
 			}`), nil
 		case "/proxy":
 			urlParam := req.URL.Query().Get("url")
-			if strings.Contains(urlParam, ".m3u8") {
-				return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\n/proxy?url=https://cdn.mewstream.buzz/seg1.ts\n#EXT-X-ENDLIST"), nil
+			if strings.Contains(urlParam, "index-") {
+				return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nseg1.ts\n#EXT-X-ENDLIST"), nil
 			}
-			return jsonResponse(http.StatusOK, "segment-data"), nil
+			return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1800000\n/proxy?url=https://cdn.mewstream.buzz/anime/abc123/index-f1.m3u8\n"), nil
 		default:
 			t.Fatalf("unexpected path = %s", req.URL.Path)
 			return nil, nil
@@ -551,12 +557,9 @@ func TestStreamsCDNURLIsProxied(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("len = %d", len(got))
 	}
-	// Should be a local file:// URL (segments were downloaded and concatenated).
+	// Should be a local file:// URL (rewritten m3u8).
 	if !strings.HasPrefix(got[0].URL, "file://") {
 		t.Fatalf("URL not local file: %q", got[0].URL)
-	}
-	if !strings.HasSuffix(got[0].URL, ".ts") {
-		t.Fatalf("URL not .ts: %q", got[0].URL)
 	}
 }
 
@@ -572,17 +575,17 @@ func TestStreamsAlreadyProxiedURLIsNotDoubleProxied(t *testing.T) {
 					"episode": {
 						"sources": {
 							"type": "SOFT",
-							"sources": {"file": "https://proxy.example.test/proxy?url=https%3A%2F%2Fcdn.example.test%2Fmaster.m3u8"}
+							"sources": {"file": "https://api.example.test/proxy?url=https%3A%2F%2Fcdn.example.test%2Fmaster.m3u8"}
 						}
 					}
 				}
 			}`), nil
 		case "/proxy":
 			urlParam := req.URL.Query().Get("url")
-			if strings.Contains(urlParam, ".m3u8") {
-				return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nhttps://proxy.example.test/proxy?url=https://cdn.example.test/seg1.ts\n#EXT-X-ENDLIST"), nil
+			if strings.Contains(urlParam, "index-") {
+				return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nseg1.ts\n#EXT-X-ENDLIST"), nil
 			}
-			return jsonResponse(http.StatusOK, "segment-data"), nil
+			return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1800000\n/proxy?url=https://cdn.example.test/index-f1.m3u8\n"), nil
 		default:
 			t.Fatalf("unexpected path = %s", req.URL.Path)
 			return nil, nil
@@ -596,5 +599,9 @@ func TestStreamsAlreadyProxiedURLIsNotDoubleProxied(t *testing.T) {
 	}
 	if len(got) != 1 {
 		t.Fatalf("len = %d", len(got))
+	}
+	// Should be a local file:// URL (rewritten m3u8).
+	if !strings.HasPrefix(got[0].URL, "file://") {
+		t.Fatalf("URL = %q, want file:// URL", got[0].URL)
 	}
 }

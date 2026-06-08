@@ -18,13 +18,19 @@ type Config struct {
 	FFmpegPath string
 }
 
-// Progress holds a snapshot of FFmpeg download progress.
+// Progress holds a snapshot of download/remux progress.
 type Progress struct {
 	Bytes      int64  // downloaded bytes
 	TotalBytes int64  // total size when known
 	Speed      string // download speed (e.g. "1.5x" or "2.5 MiB/s")
 	TimeMs     int64  // out_time_ms from FFmpeg
 	Bitrate    string // bitrate from FFmpeg (e.g. "3400.0kbits/s")
+
+	// Segment download progress (set by providers like bettermelon
+	// that download HLS segments before running ffmpeg).
+	SegmentsDone  int    // number of segments downloaded
+	SegmentsTotal int    // total number of segments
+	Phase         string // current phase: "segments" or "" (ffmpeg)
 }
 
 // ProgressFunc receives progress updates during an FFmpeg download.
@@ -57,8 +63,8 @@ func (r *Runner) Args(url, output, referer, userAgent string) []string {
 	args = appendHLSFlags(args, url)
 	args = append(args,
 		"-i", url,
-		"-map", "0:v",
-		"-map", "0:a",
+		"-map", "0:v?",
+		"-map", "0:a?",
 		"-c", "copy",
 		output,
 	)
@@ -83,8 +89,8 @@ func (r *Runner) ProgressArgs(url, output, referer, userAgent string) []string {
 	args = appendHLSFlags(args, url)
 	args = append(args,
 		"-i", url,
-		"-map", "0:v",
-		"-map", "0:a",
+		"-map", "0:v?",
+		"-map", "0:a?",
 		"-c", "copy",
 		output,
 	)
@@ -99,9 +105,12 @@ func appendHLSFlags(args []string, url string) []string {
 	if !isHLS(url) {
 		return args
 	}
+	// Default allowed_segment_extensions in ffmpeg omits many fake extensions
+	// used by anime CDNs (e.g. .jpg, .js, .css disguising MPEG-TS segments).
+	// Append the full set of known fake extensions so ffmpeg will fetch them.
 	args = append(args,
 		"-allowed_extensions", "ALL",
-		"-allowed_segment_extensions", "ALL",
+		"-allowed_segment_extensions", "3gp,aac,avi,ac3,eac3,flac,mkv,m3u8,m4a,m4s,m4v,mpg,mov,mp2,mp3,mp4,mpeg,mpegts,ogg,ogv,oga,ts,vob,vtt,wav,webvtt,cmfv,cmfa,ec3,fmp4,html,jpg,jpeg,js,css,txt,png,webp,gif,svg,ico,json,xml",
 		"-extension_picky", "0",
 	)
 	if strings.HasPrefix(url, "file://") {
@@ -116,16 +125,46 @@ func isHLS(url string) bool {
 	return (strings.Contains(lower, ".m3u8") || strings.Contains(lower, "/proxy?url=")) && !strings.Contains(lower, ".ts")
 }
 
-// Execute runs the FFmpeg binary.
+// Execute runs the FFmpeg binary and captures stderr for error reporting.
 func (r *Runner) Execute(ctx context.Context, args []string) error {
 	cmd := exec.CommandContext(ctx, r.config.FFmpegPath, args...)
 	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	return cmd.Run()
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("ffmpeg: create stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("ffmpeg: start: %w", err)
+	}
+
+	// Capture stderr output (limited to 4KB to avoid memory issues).
+	stderrData, _ := io.ReadAll(io.LimitReader(stderr, 4096))
+
+	waitErr := cmd.Wait()
+	if waitErr != nil {
+		// Include captured stderr in the error for diagnostics.
+		if len(stderrData) > 0 {
+			msg := strings.TrimSpace(string(stderrData))
+			if msg != "" {
+				return fmt.Errorf("ffmpeg: %w (%s)", waitErr, truncate(msg, 200))
+			}
+		}
+		return waitErr
+	}
+	return nil
+}
+
+// truncate shortens a string to at most n characters, appending "..." if truncated.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 // ExecuteWithProgress runs the FFmpeg binary and calls fn with progress updates
-// parsed from stderr.
+// parsed from stderr. On failure, the last stderr lines are included in the error.
 func (r *Runner) ExecuteWithProgress(ctx context.Context, args []string, fn ProgressFunc) error {
 	cmd := exec.CommandContext(ctx, r.config.FFmpegPath, args...)
 
@@ -139,13 +178,20 @@ func (r *Runner) ExecuteWithProgress(ctx context.Context, args []string, fn Prog
 	}
 
 	done := make(chan struct{})
+	var lastLines []string
 	go func() {
 		defer close(done)
-		parseProgressOutput(stderr, fn)
+		lastLines = parseProgressOutputWithDiags(stderr, fn)
 	}()
 
 	waitErr := cmd.Wait()
 	<-done
+	if waitErr != nil && len(lastLines) > 0 {
+		joined := strings.TrimSpace(strings.Join(lastLines, "; "))
+		if joined != "" {
+			return fmt.Errorf("ffmpeg: %w (%s)", waitErr, truncate(joined, 200))
+		}
+	}
 	return waitErr
 }
 
@@ -166,6 +212,8 @@ func (r *Runner) CleanupPartial(path string) {
 }
 
 // parseProgressOutput reads FFmpeg's -progress key=value output.
+//
+//nolint:unused
 func parseProgressOutput(r io.Reader, fn ProgressFunc) {
 	scanner := bufio.NewScanner(r)
 	var p Progress
@@ -200,6 +248,60 @@ func parseProgressOutput(r io.Reader, fn ProgressFunc) {
 			}
 		}
 	}
+}
+
+// parseProgressOutputWithDiags is like parseProgressOutput but also returns
+// the last few non-progress stderr lines for diagnostic error reporting.
+func parseProgressOutputWithDiags(r io.Reader, fn ProgressFunc) []string {
+	scanner := bufio.NewScanner(r)
+	var p Progress
+	const diagMaxLines = 5
+	var diags []string
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		key, value, ok := parseKV(line)
+		if !ok {
+			// Non key=value line — keep for diagnostics (e.g. error messages).
+			if len(diags) >= diagMaxLines {
+				diags = diags[1:]
+			}
+			diags = append(diags, line)
+			continue
+		}
+
+		switch key {
+		case "out_time_ms":
+			if v, err := strconv.ParseInt(value, 10, 64); err == nil {
+				p.TimeMs = v
+			}
+		case "total_size":
+			if v, err := strconv.ParseInt(value, 10, 64); err == nil {
+				p.Bytes = v
+			}
+		case "speed":
+			p.Speed = value
+		case "bitrate":
+			p.Bitrate = value
+		case "progress":
+			if value == "end" {
+				// FFmpeg reports progress=end on completion or error.
+				// Keep this as a diagnostic hint.
+				if len(diags) >= diagMaxLines {
+					diags = diags[1:]
+				}
+				diags = append(diags, "progress=end")
+			}
+			if value == "continue" && fn != nil {
+				fn(p)
+			}
+		}
+	}
+	return diags
 }
 
 func parseKV(line string) (key, value string, ok bool) {
