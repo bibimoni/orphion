@@ -245,3 +245,74 @@ func TestClientCachesDirListings(t *testing.T) {
 		t.Errorf("expected no additional fetches for cached search, got %d total (was %d)", fetchCount, firstFetch)
 	}
 }
+
+func TestNormalizeDirNameSemicolons(t *testing.T) {
+	// Semicolons should be treated as separators, not part of tokens.
+	// This ensures "Steins;Gate" produces tokens {"steins", "gate"}
+	// instead of {"steins;gate"}, which matches the ranking algorithm.
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Steins;Gate", "steins gate"},
+		{"Stein;Gate", "stein gate"},
+		{"Re:Zero", "re zero"},
+		{"Dagashi_Kashi", "dagashi kashi"},
+		{"Bleach:", "bleach"},
+		{"A.I.C.O.", "a i c o"},
+	}
+	for _, tt := range tests {
+		got := normalizeDirName(tt.input)
+		if got != tt.want {
+			t.Errorf("normalizeDirName(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestClientSearchTypoMatch(t *testing.T) {
+	// Simulate the Kitsunekko scenario where "Stein;Gate" (typo, no 's')
+	// is listed alongside "Steins;Gate 0" (correctly spelled sequel).
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/subtitles/japanese/" {
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(`<html><body>
+<a href="/subtitles/japanese/">Parent Directory</a>
+<a href="Stein;Gate/">Stein;Gate/</a>
+<a href="Steins;Gate%200/">Steins;Gate 0/</a>
+<a href="Naruto/">Naruto/</a>
+</body></html>`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	cfg := Config{
+		BaseURL:   server.URL,
+		Languages: []string{"japanese"},
+		UserAgent: "test",
+	}
+	client, err := NewClient(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := client.Search(t.Context(), "Steins;Gate")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Both "Stein;Gate" and "Steins;Gate 0" should pass the pre-filter.
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results (typo + sequel), got %d", len(results))
+	}
+
+	// Rank results — the typo'd original should rank higher than the sequel.
+	ranked := subtitle.RankResults("Steins;Gate", results, 20, 0.2)
+	if len(ranked) < 2 {
+		t.Fatalf("RankResults: expected at least 2 ranked results, got %d", len(ranked))
+	}
+	if ranked[0].Title != "Stein;Gate" {
+		t.Errorf("RankResults first = %q, want %q (typo'd original should rank first)", ranked[0].Title, "Stein;Gate")
+	}
+}

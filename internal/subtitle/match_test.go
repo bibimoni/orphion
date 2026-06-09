@@ -200,6 +200,47 @@ func TestFolderMatchNoMatch(t *testing.T) {
 	}
 }
 
+func TestBestMatchTypo(t *testing.T) {
+	// Simulate the real Kitsunekko scenario: the directory for the original
+	// Steins;Gate is misspelled as "Stein;Gate" (missing 's').
+	results := []Result{
+		{ID: "typo", Title: "Stein;Gate", Type: "tv", SubCount: 10},
+		{ID: "sequel", Title: "Steins;Gate 0", Type: "tv", SubCount: 30},
+		{ID: "unrelated", Title: "Naruto", Type: "tv", SubCount: 100},
+	}
+
+	// "Steins;Gate" should match the typo'd original over the sequel.
+	idx, result := BestMatch("Steins;Gate", results)
+	if idx < 0 {
+		t.Fatal("BestMatch should find a match for the typo'd title")
+	}
+	if result.ID != "typo" {
+		t.Errorf("BestMatch(Steins;Gate) = %s (%s), want typo (Stein;Gate)", result.ID, result.Title)
+	}
+}
+
+func TestEditDistanceWithin(t *testing.T) {
+	tests := []struct {
+		a, b     string
+		maxDist  int
+		expected bool
+	}{
+		{"stein", "steins", 1, true}, // single insertion
+		{"steins", "stein", 1, true}, // single deletion
+		{"gate", "gate", 1, true},    // identical
+		{"abc", "xyz", 1, false},     // completely different
+		{"a", "abc", 1, false},       // two insertions
+		{"a", "abc", 2, true},        // two insertions within limit
+	}
+
+	for _, tt := range tests {
+		got := editDistanceWithin(tt.a, tt.b, tt.maxDist)
+		if got != tt.expected {
+			t.Errorf("editDistanceWithin(%q, %q, %d) = %v, want %v", tt.a, tt.b, tt.maxDist, got, tt.expected)
+		}
+	}
+}
+
 func TestRankResults(t *testing.T) {
 	results := []Result{
 		{ID: "1", Title: "Steins;Gate", Type: "tv", SubCount: 50},

@@ -118,3 +118,59 @@ const (
 	// and directory listings should not take long to fetch.
 	KitsunekkoTimeout = 10 * time.Second
 )
+
+// ── Subtitle Matching ──────────────────────────────────────────────────
+
+const (
+	// MatchMinScore is the minimum similarity score for BestMatch to
+	// consider a result a valid match. Below this, no match is returned.
+	MatchMinScore = 0.3
+
+	// RankDefaultMax is the default maximum number of results returned
+	// by RankResults when maxResults is <= 0.
+	RankDefaultMax = 20
+
+	// RankMinScore is the minimum similarity score used by the CLI when
+	// ranking subtitle search results. Results below this score are
+	// excluded from the selection list.
+	RankMinScore = 0.2
+
+	// FolderMatchMinScore is the minimum similarity score for FolderMatch
+	// to include a folder name in results.
+	FolderMatchMinScore = 0.1
+
+	// MatchTVBonus is the score bonus added when a result's type is "tv"
+	// (anime TV series are the most common search target).
+	MatchTVBonus = 0.05
+
+	// MatchSubCountBonus is the score bonus added when a result has
+	// subtitles available, helping prefer entries with actual content.
+	MatchSubCountBonus = 0.02
+
+	// FuzzyTokenCredit is the partial score credit (0–1) given when a
+	// query token fuzzy-matches a result token within edit distance 1.
+	// For example, "stein" fuzzy-matches "steins" with this credit.
+	FuzzyTokenCredit = 0.8
+
+	// FuzzyEditDistance is the maximum edit distance for fuzzy token
+	// matching. Tokens differing by this many edits or fewer count as
+	// partial matches (e.g. "stein" ↔ "steins" at distance 1).
+	FuzzyEditDistance = 1
+
+	// TokenWeight is the weight given to token-based overlap in the
+	// combined similarity score. The remainder (1-TokenWeight) goes
+	// to character-level bigram similarity.
+	TokenWeight = 0.6
+
+	// CharWeight is the weight given to character-level bigram similarity
+	// in the combined score (1 - TokenWeight).
+	CharWeight = 0.4
+)
+
+// ── Interactive UI ──────────────────────────────────────────────────────
+
+const (
+	// InteractiveMaxHeight is the maximum number of visible rows in
+	// interactive select/multi-select prompts (pterm WithMaxHeight).
+	InteractiveMaxHeight = 20
+)

@@ -315,9 +315,18 @@ func parseSlugLang(slug string) (string, string) {
 // normalizeDirName produces a canonical key for deduplicating directory
 // names that differ only in underscores vs spaces or URL encoding.
 // e.g. "Dagashi_Kashi" and "Dagashi Kashi" both become "dagashi kashi".
+// Special characters (semicolons, colons, etc.) are treated as separators
+// so that "Steins;Gate" and "Stein;Gate" produce overlapping tokens.
 func normalizeDirName(name string) string {
 	s := strings.ToLower(name)
 	s = strings.ReplaceAll(s, "_", " ")
+	// Replace common punctuation with spaces so they act as separators.
+	// This ensures "Steins;Gate" becomes "steins gate" (two tokens)
+	// rather than "steins;gate" (one token), which matches the
+	// normalizeTitle logic used by the ranking algorithm.
+	for _, ch := range []string{";", ":", "-", ".", ",", "!", "?", "'", "\"", "(", ")"} {
+		s = strings.ReplaceAll(s, ch, " ")
+	}
 	// Collapse multiple spaces.
 	for strings.Contains(s, "  ") {
 		s = strings.ReplaceAll(s, "  ", " ")
