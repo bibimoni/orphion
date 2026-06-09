@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/distiled/orphion/internal/app"
+	"github.com/distiled/orphion/internal/common"
 	"github.com/distiled/orphion/internal/config"
 	"github.com/distiled/orphion/internal/ffmpeg"
 	"github.com/distiled/orphion/internal/provider"
@@ -42,7 +43,7 @@ var interactiveMultiSelect = func(options []string, defaultText string) ([]strin
 		WithOptions(options).
 		WithDefaultText(defaultText).
 		WithCheckmark(&pterm.Checkmark{Checked: pterm.Green("✓"), Unchecked: " "}).
-		WithMaxHeight(8)
+		WithMaxHeight(common.InteractiveMaxHeight)
 	s.OptionStyle = optionStyle
 	return s.Show()
 }

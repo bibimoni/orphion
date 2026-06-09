@@ -8,6 +8,7 @@ import (
 	"github.com/pterm/pterm"
 
 	"github.com/distiled/orphion/internal/app"
+	"github.com/distiled/orphion/internal/common"
 	"github.com/distiled/orphion/internal/subtitle"
 )
 
@@ -70,7 +71,7 @@ func selectSubtitleResult(ctx context.Context, service *app.Service, query strin
 	// Rank results by similarity and keep the top matches.
 	// This is critical for providers like kitsunekko that return ALL
 	// directories (thousands) without server-side filtering.
-	ranked := subtitle.RankResults(query, results, 20, 0.2)
+	ranked := subtitle.RankResults(query, results, common.RankDefaultMax, common.RankMinScore)
 
 	// If results come from multiple providers, always show the selection
 	// list so the user can choose which provider (and thus which subtitle
