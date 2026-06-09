@@ -165,10 +165,7 @@ Downloads use `.part.mkv` during transfer and rename to `.mkv` only on success.
 <!-- CONTRIBUTING -->
 ## Contributing
 
-Contributions are welcome. Before submitting a PR, please review:
-
-1. [`docs/architecture.md`](docs/architecture.md) — package boundaries
-2. [`docs/usage.md`](docs/usage.md) — user-facing documentation
+Contributions are welcome!
 
 ### Dev Setup
 
