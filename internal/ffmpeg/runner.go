@@ -55,6 +55,8 @@ func (r *Runner) Args(url, output, referer, userAgent string) []string {
 		"-nostdin",
 		"-hide_banner",
 		"-loglevel", "warning",
+		"-err_detect", "ignore_err",
+		"-fflags", "+genpts",
 	}
 	if !strings.HasPrefix(url, "file://") {
 		headers := fmt.Sprintf("Referer: %s\r\nUser-Agent: %s\r\n", referer, userAgent)
@@ -66,6 +68,8 @@ func (r *Runner) Args(url, output, referer, userAgent string) []string {
 		"-map", "0:v?",
 		"-map", "0:a?",
 		"-c", "copy",
+		"-max_interleave_delta", "0",
+		"-avoid_negative_ts", "make_zero",
 		output,
 	)
 	return args
@@ -79,6 +83,8 @@ func (r *Runner) ProgressArgs(url, output, referer, userAgent string) []string {
 		"-nostdin",
 		"-hide_banner",
 		"-loglevel", "warning",
+		"-err_detect", "ignore_err",
+		"-fflags", "+genpts",
 		"-progress", "pipe:2",
 		"-stats_period", "1",
 	}
@@ -92,6 +98,8 @@ func (r *Runner) ProgressArgs(url, output, referer, userAgent string) []string {
 		"-map", "0:v?",
 		"-map", "0:a?",
 		"-c", "copy",
+		"-max_interleave_delta", "0",
+		"-avoid_negative_ts", "make_zero",
 		output,
 	)
 	return args
