@@ -119,6 +119,16 @@ const (
 	KitsunekkoTimeout = 10 * time.Second
 )
 
+// ── Jimaku Provider ────────────────────────────────────────────────────────
+
+const (
+	// JimakuSiteURL is the jimaku.cc base URL.
+	JimakuSiteURL = "https://jimaku.cc"
+
+	// JimakuTimeout is the HTTP timeout for jimaku.cc requests.
+	JimakuTimeout = 15 * time.Second
+)
+
 // ── Subtitle Matching ──────────────────────────────────────────────────
 
 const (

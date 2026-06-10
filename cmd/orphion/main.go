@@ -17,6 +17,7 @@ import (
 	"github.com/distiled/orphion/internal/provider/allanime"
 	"github.com/distiled/orphion/internal/provider/bettermelon"
 	"github.com/distiled/orphion/internal/subtitle"
+	"github.com/distiled/orphion/internal/subtitle/jimaku"
 	"github.com/distiled/orphion/internal/subtitle/kitsunekko"
 	"github.com/distiled/orphion/internal/subtitle/subdl"
 )
@@ -68,6 +69,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "orphion: kitsunekko: %v\n", err)
 	} else {
 		subProviders["kitsunekko"] = p
+	}
+	if p, err := jimaku.NewProvider(jimaku.DefaultConfig()); err != nil {
+		fmt.Fprintf(os.Stderr, "orphion: jimaku: %v\n", err)
+	} else {
+		subProviders["jimaku"] = p
 	}
 
 	var subtitleProvider subtitle.Provider

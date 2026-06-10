@@ -22,6 +22,8 @@ func TestRunnerArgs(t *testing.T) {
 	hasStdin := false
 	hasMapV := false
 	hasMapA := false
+	hasErrDetect := false
+	hasFFlags := false
 	for i, a := range args {
 		if a == "-c" {
 			hasCopy = true
@@ -35,6 +37,12 @@ func TestRunnerArgs(t *testing.T) {
 		if a == "-map" && i+1 < len(args) && args[i+1] == "0:a?" {
 			hasMapA = true
 		}
+		if a == "-err_detect" && i+1 < len(args) && args[i+1] == "ignore_err" {
+			hasErrDetect = true
+		}
+		if a == "-fflags" && i+1 < len(args) && args[i+1] == "+genpts" {
+			hasFFlags = true
+		}
 	}
 	if !hasCopy || !hasStdin {
 		t.Error("missing critical args")
@@ -44,6 +52,12 @@ func TestRunnerArgs(t *testing.T) {
 	}
 	if !hasMapA {
 		t.Error("missing -map 0:a? (optional audio map)")
+	}
+	if !hasErrDetect {
+		t.Error("missing -err_detect ignore_err (error resilience)")
+	}
+	if !hasFFlags {
+		t.Error("missing -fflags +genpts (PTS generation)")
 	}
 }
 
