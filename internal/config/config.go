@@ -21,6 +21,7 @@ type Config struct {
 	Provider         string `yaml:"provider"`
 	FFmpegPath       string `yaml:"ffmpeg_path"`
 	SubtitleLang     string `yaml:"subtitle_lang"`
+	SegmentWorkers   int    `yaml:"segment_workers"`
 }
 
 // ErrConfigExists is returned when a configuration file already exists.
@@ -47,6 +48,9 @@ func SetDefaults(cfg *Config) {
 	if cfg.SubtitleLang == "" {
 		cfg.SubtitleLang = common.DefaultSubtitleLang
 	}
+	if cfg.SegmentWorkers == 0 {
+		cfg.SegmentWorkers = common.DefaultSegmentWorkers
+	}
 }
 
 // raw is used for YAML decoding to track which fields were explicitly set.
@@ -57,6 +61,7 @@ type raw struct {
 	Provider         *string `yaml:"provider"`
 	FFmpegPath       *string `yaml:"ffmpeg_path"`
 	SubtitleLang     *string `yaml:"subtitle_lang"`
+	SegmentWorkers   *int    `yaml:"segment_workers"`
 }
 
 // Load reads and validates a configuration YAML file.
@@ -135,6 +140,11 @@ func decode(data []byte, path string) (*Config, error) {
 	} else {
 		cfg.SubtitleLang = common.DefaultSubtitleLang
 	}
+	if rawCfg.SegmentWorkers != nil {
+		cfg.SegmentWorkers = *rawCfg.SegmentWorkers
+	} else {
+		cfg.SegmentWorkers = common.DefaultSegmentWorkers
+	}
 
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -145,6 +155,9 @@ func decode(data []byte, path string) (*Config, error) {
 func (c *Config) validate() error {
 	if c.Concurrency < 1 || c.Concurrency > 4 {
 		return fmt.Errorf("concurrency must be between 1 and 4, got %d", c.Concurrency)
+	}
+	if c.SegmentWorkers < 1 || c.SegmentWorkers > common.MaxSegmentWorkers {
+		return fmt.Errorf("segment_workers must be between 1 and %d, got %d", common.MaxSegmentWorkers, c.SegmentWorkers)
 	}
 	if c.OutputDir == "" {
 		return fmt.Errorf("output_dir is required")

@@ -28,7 +28,6 @@ import (
 var availableProviders = []string{"hianime", "animekai", "kickassanime", "anikoto"}
 
 const (
-	segmentWorkers = 8
 	maxSegmentSize = 64 << 20
 )
 
@@ -67,11 +66,12 @@ func (e redactedRequestError) Unwrap() error {
 
 // Client fetches and normalizes Bettermelon data.
 type Client struct {
-	httpClient *http.Client // for API calls (short timeout)
-	apiURL     *url.URL
-	proxyURL   *url.URL
-	userAgent  string
-	provider   string
+	httpClient     *http.Client // for API calls (short timeout)
+	apiURL         *url.URL
+	proxyURL       *url.URL
+	userAgent      string
+	provider       string
+	segmentWorkers int
 }
 
 // NewClient validates configuration and creates a Bettermelon client.
@@ -96,12 +96,19 @@ func NewClient(cfg Config) (*Client, error) {
 	if cfg.HTTPClient == nil {
 		cfg.HTTPClient = &http.Client{Timeout: cfg.Timeout}
 	}
+	if cfg.SegmentWorkers < 1 {
+		cfg.SegmentWorkers = common.DefaultSegmentWorkers
+	}
+	if cfg.SegmentWorkers > common.MaxSegmentWorkers {
+		cfg.SegmentWorkers = common.MaxSegmentWorkers
+	}
 	return &Client{
-		httpClient: cfg.HTTPClient,
-		apiURL:     apiURL,
-		proxyURL:   proxyURL,
-		userAgent:  cfg.UserAgent,
-		provider:   cfg.Provider,
+		httpClient:     cfg.HTTPClient,
+		apiURL:         apiURL,
+		proxyURL:       proxyURL,
+		userAgent:      cfg.UserAgent,
+		provider:       cfg.Provider,
+		segmentWorkers: cfg.SegmentWorkers,
 	}, nil
 }
 
@@ -636,7 +643,7 @@ func (c *Client) downloadResources(ctx context.Context, resources []localResourc
 	var firstErr error
 	var errOnce sync.Once
 
-	workerCount := min(segmentWorkers, len(resources))
+	workerCount := min(c.segmentWorkers, len(resources))
 	for range workerCount {
 		wg.Add(1)
 		go func() {

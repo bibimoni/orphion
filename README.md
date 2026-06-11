@@ -54,6 +54,7 @@ flags for scripting — all backed by the same core services.
 - **Episode expressions** — `1-4,7` or `all` for flexible episode selection
 - **Quality selection** — 1080p, 720p, 480p with automatic fallback
 - **Concurrent downloads** — 1–4 parallel episode downloads with live progress
+- **Parallel segment fetching** — configurable 1–64 workers for HLS segment download
 - **Subtitles** — search and download from SubDL, Kitsunekko, and Jimaku
 - **Episode-aware subtitles** — auto-match subtitles to selected episodes
 - **Auto-configuration** — sensible defaults on first run, no setup required
@@ -131,6 +132,7 @@ concurrency: 1
 provider: allanime
 ffmpeg_path: ffmpeg
 subtitle_lang: english
+segment_workers: 8
 ```
 
 > **Windows note**: The config file is located at `%APPDATA%\orphion\config.yaml`. On macOS and Linux, it is at `~/.config/orphion/config.yaml`.
@@ -187,6 +189,12 @@ results, and live download progress.
 | `--output` | Output directory | ~/Anime |
 | `--concurrency` | Parallel downloads (1–4) | 1 |
 | `--force` | Overwrite existing files | false |
+
+**Config-only options** (set in `config.yaml`, not available as CLI flags):
+
+| Key | Description | Default |
+|-----|-------------|---------|
+| `segment_workers` | Parallel segment download workers for HLS providers (1–64) | 8 |
 
 ### Episode Expressions
 
