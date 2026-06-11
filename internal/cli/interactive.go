@@ -11,11 +11,11 @@ import (
 	"github.com/pterm/pterm/putils"
 	"github.com/spf13/cobra"
 
-	"github.com/distiled/orphion/internal/app"
-	"github.com/distiled/orphion/internal/common"
-	"github.com/distiled/orphion/internal/config"
-	"github.com/distiled/orphion/internal/ffmpeg"
-	"github.com/distiled/orphion/internal/provider"
+	"github.com/bibimoni/orphion/internal/app"
+	"github.com/bibimoni/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/config"
+	"github.com/bibimoni/orphion/internal/ffmpeg"
+	"github.com/bibimoni/orphion/internal/provider"
 )
 
 // imeArtifactRe matches common IME/terminal escape artifacts that pterm
@@ -33,7 +33,8 @@ var optionStyle = pterm.NewStyle(pterm.FgWhite)
 var interactiveSelect = func(options []string, defaultText string) (string, error) {
 	s := pterm.DefaultInteractiveSelect.
 		WithOptions(options).
-		WithDefaultText(defaultText)
+		WithDefaultText(defaultText).
+		WithMaxHeight(common.InteractiveMaxHeight)
 	s.OptionStyle = optionStyle
 	return s.Show()
 }
@@ -101,7 +102,7 @@ func runInteractive(cmd *cobra.Command, service *app.Service) error {
 	for {
 		switch current {
 		case stepSearch:
-			q, err := pterm.DefaultInteractiveTextInput.WithDefaultText("Search: ").Show()
+			q, err := pterm.DefaultInteractiveTextInput.WithDefaultText("Search").Show()
 			if err != nil {
 				return fmt.Errorf("search: %w", err)
 			}
@@ -145,7 +146,7 @@ func runInteractive(cmd *cobra.Command, service *app.Service) error {
 			}
 			titleSel := pterm.DefaultInteractiveSelect.
 				WithOptions(opts).
-				WithDefaultText("Select title:")
+				WithDefaultText("Select title")
 			titleSel.OptionStyle = optionStyle
 			selected, err := titleSel.Show()
 			if err != nil {
@@ -160,19 +161,19 @@ func runInteractive(cmd *cobra.Command, service *app.Service) error {
 			current = stepSource
 
 		case stepSource:
-			srcSpinner, _ := pterm.DefaultSpinner.Start("Getting sources...")
+			srcSpinner, _ := pterm.DefaultSpinner.Start("Loading episodes...")
 			eps, err := service.GetEpisodes(ctx, animeID)
 			if err != nil {
-				srcSpinner.Fail(fmt.Sprintf("Sources failed: %s", err))
-				return fmt.Errorf("sources: %w", err)
+				srcSpinner.Fail(fmt.Sprintf("Episode lookup failed: %s", err))
+				return fmt.Errorf("episodes: %w", err)
 			}
 			if len(eps) == 0 {
-				srcSpinner.Fail("No sources found")
+				srcSpinner.Fail("No episodes found")
 				pterm.Info.Println("Try selecting a different title.")
 				current = stepTitle
 				continue
 			}
-			srcSpinner.Success(fmt.Sprintf("Found %d source(s)", len(eps)))
+			srcSpinner.Success(fmt.Sprintf("Found %d episode(s)", len(eps)))
 			episodes = eps
 
 			sel, err := selectInteractiveEpisodes(episodes)
@@ -200,9 +201,14 @@ func runInteractive(cmd *cobra.Command, service *app.Service) error {
 			current = stepSubtitles
 
 		case stepSubtitles:
+			selectedNumbers := make([]string, len(selectedEpisodes))
+			for i, episode := range selectedEpisodes {
+				selectedNumbers[i] = episode.Number
+			}
 			subResult, err := RunSubtitleFlow(ctx, service, SubtitleFlowConfig{
-				Query:   selectedTitle,
-				BaseDir: service.OutputDir(),
+				Query:    selectedTitle,
+				BaseDir:  service.OutputDir(),
+				Episodes: selectedNumbers,
 			})
 			if err != nil {
 				pterm.Info.Printfln("Subtitle selection failed: %s", err)
@@ -243,13 +249,34 @@ func runInteractive(cmd *cobra.Command, service *app.Service) error {
 			}
 
 			// Download selected subtitle if one was chosen.
-			if pendingSubResult != nil && pendingSubResult.Subtitle != nil {
-				dlSpinner, _ := pterm.DefaultSpinner.Start("Downloading subtitle...")
-				extracted, err := service.DownloadSubtitle(ctx, *pendingSubResult.Subtitle, pendingSubResult.OutDir)
-				if err != nil {
-					dlSpinner.Fail(fmt.Sprintf("Subtitle download failed: %s", err))
+			if pendingSubResult != nil && len(pendingSubResult.Subtitles) > 0 {
+				extractedCount := 0
+				failedCount := 0
+				for i, selectedSub := range pendingSubResult.Subtitles {
+					dlSpinner, _ := pterm.DefaultSpinner.Start(
+						fmt.Sprintf("Downloading subtitle %d/%d...", i+1, len(pendingSubResult.Subtitles)),
+					)
+					extracted, err := service.DownloadSubtitle(ctx, selectedSub, pendingSubResult.OutDir)
+					if err != nil {
+						failedCount++
+						dlSpinner.Fail(fmt.Sprintf("Subtitle download failed: %s", err))
+						continue
+					}
+					extractedCount += len(extracted)
+					dlSpinner.Success(fmt.Sprintf("Extracted %d file(s)", len(extracted)))
+				}
+				if failedCount == 0 {
+					pterm.Success.Printfln(
+						"Saved %d subtitle file(s) to %s",
+						extractedCount,
+						pterm.LightBlue(pendingSubResult.OutDir),
+					)
 				} else {
-					dlSpinner.Success(fmt.Sprintf("Extracted %d subtitle file(s) to %s", len(extracted), pterm.LightBlue(pendingSubResult.OutDir)))
+					pterm.Warning.Printfln(
+						"Saved %d subtitle file(s); %d download(s) failed",
+						extractedCount,
+						failedCount,
+					)
 				}
 			}
 
@@ -271,9 +298,9 @@ func selectInteractiveEpisodes(episodes []provider.Episode) ([]provider.Episode,
 		options[i+1] = option
 		optionToEpisode[option] = ep
 	}
-	selectedOptions, err := interactiveMultiSelect(options, "Select source(s) (Enter select, Tab confirm):")
+	selectedOptions, err := interactiveMultiSelect(options, "Select episodes (Enter toggles, Tab confirms)")
 	if err != nil {
-		return nil, fmt.Errorf("source selection: %w", err)
+		return nil, fmt.Errorf("episode selection: %w", err)
 	}
 	if len(selectedOptions) == 0 {
 		return nil, fmt.Errorf("no sources selected")
@@ -349,7 +376,7 @@ func selectInteractiveProvider(service *app.Service) error {
 	if len(providers) == 0 {
 		return nil
 	}
-	selected, err := interactiveSelect(providers, "Select provider:")
+	selected, err := interactiveSelect(providers, "Select provider")
 	if err != nil {
 		return fmt.Errorf("provider selection: %w", err)
 	}

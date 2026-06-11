@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/distiled/orphion/internal/ffmpeg"
-	"github.com/distiled/orphion/internal/paths"
-	"github.com/distiled/orphion/internal/provider"
-	"github.com/distiled/orphion/internal/subtitle"
+	"github.com/bibimoni/orphion/internal/ffmpeg"
+	"github.com/bibimoni/orphion/internal/paths"
+	"github.com/bibimoni/orphion/internal/provider"
+	"github.com/bibimoni/orphion/internal/subtitle"
 )
 
 type fakeProvider struct {

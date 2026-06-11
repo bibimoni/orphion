@@ -3,7 +3,7 @@ package bettermelon
 import (
 	"context"
 
-	"github.com/distiled/orphion/internal/provider"
+	"github.com/bibimoni/orphion/internal/provider"
 )
 
 // Provider implements the normalized provider contract.
@@ -32,4 +32,9 @@ func (p *Provider) Streams(ctx context.Context, episodeID string) ([]provider.St
 	return p.client.Streams(ctx, episodeID)
 }
 
+func (p *Provider) PrepareStream(ctx context.Context, stream provider.Stream, progress provider.SegmentProgressFunc) (provider.Stream, error) {
+	return p.client.PrepareStream(ctx, stream, progress)
+}
+
 var _ provider.Provider = (*Provider)(nil)
+var _ provider.StreamPreparer = (*Provider)(nil)

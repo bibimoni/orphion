@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/distiled/orphion/internal/common"
-	"github.com/distiled/orphion/internal/subtitle"
+	"github.com/bibimoni/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/subtitle"
 )
 
 // Client scrapes jimaku.cc pages for anime subtitle entries.
@@ -43,9 +43,13 @@ func NewClient(cfg Config) (*Client, error) {
 	if cfg.BaseURL == "" {
 		return nil, fmt.Errorf("jimaku: base URL is required")
 	}
+	httpClient := cfg.HTTPClient
+	if httpClient == nil {
+		httpClient = cfg.defaultHTTPClient()
+	}
 	return &Client{
 		cfg:    cfg,
-		client: cfg.HTTPClient(),
+		client: httpClient,
 	}, nil
 }
 
@@ -71,7 +75,8 @@ func (c *Client) Search(ctx context.Context, query string) ([]subtitle.Result, e
 		seen[e.ID] = true
 
 		// Cheap pre-filter: skip entries that share no tokens with the query.
-		if len(queryTokens) > 0 && !hasTokenOverlap(e.Title, queryTokens) {
+		cleaned := cleanTitle(e.Title)
+		if len(queryTokens) > 0 && !hasTokenOverlap(cleaned, queryTokens) {
 			continue
 		}
 

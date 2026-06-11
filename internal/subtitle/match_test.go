@@ -1,6 +1,10 @@
 package subtitle
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/bibimoni/orphion/internal/common"
+)
 
 func TestBestMatch(t *testing.T) {
 	results := []Result{
@@ -282,5 +286,25 @@ func TestRankResults(t *testing.T) {
 	ranked = RankResults("test", nil, 10, 0.2)
 	if ranked != nil {
 		t.Errorf("RankResults(nil) = %v, want nil", ranked)
+	}
+}
+
+func TestRankResultsRejectsSharedGenericTitleWords(t *testing.T) {
+	results := []Result{
+		{ID: "correct", Title: "Sentenced to Be a Hero", Type: "tv", Source: "subdl"},
+		{ID: "wrong-3", Title: "Boku no Hero Academia 3", Type: "tv", Source: "jimaku"},
+		{ID: "wrong-7", Title: "Boku no Hero Academia 7", Type: "tv", Source: "jimaku"},
+		{ID: "wrong-generic", Title: "A Letter to Momo", Type: "tv", Source: "kitsunekko"},
+		{ID: "wrong-hero", Title: "Hero Bank", Type: "tv", Source: "jimaku"},
+		{ID: "wrong-hero-underscore", Title: "Hero_Bank", Type: "tv", Source: "kitsunekko"},
+		{ID: "wrong-heron", Title: "the boy and heron", Type: "movie", Source: "kitsunekko"},
+	}
+
+	ranked := RankResults("Sentenced to Be a Hero", results, 20, common.RankMinScore)
+	if len(ranked) != 1 {
+		t.Fatalf("RankResults() = %#v, want only the exact title", ranked)
+	}
+	if ranked[0].ID != "correct" {
+		t.Fatalf("RankResults()[0] = %q, want correct", ranked[0].ID)
 	}
 }

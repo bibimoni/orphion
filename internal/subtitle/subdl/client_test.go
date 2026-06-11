@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/distiled/orphion/internal/subtitle"
+	"github.com/bibimoni/orphion/internal/subtitle"
 )
 
 // nextDataPage wraps pageProps as a full __NEXT_DATA__ HTML document.

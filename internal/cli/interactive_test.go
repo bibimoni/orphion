@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/distiled/orphion/internal/app"
-	"github.com/distiled/orphion/internal/ffmpeg"
-	"github.com/distiled/orphion/internal/provider"
+	"github.com/bibimoni/orphion/internal/app"
+	"github.com/bibimoni/orphion/internal/ffmpeg"
+	"github.com/bibimoni/orphion/internal/provider"
 )
 
 type interactiveFakeProvider struct {
@@ -31,8 +31,8 @@ func TestSelectInteractiveProviderSwitchesProviderWithoutImplyingType(t *testing
 	originalSelect := interactiveSelect
 	t.Cleanup(func() { interactiveSelect = originalSelect })
 	interactiveSelect = func(options []string, defaultText string) (string, error) {
-		if defaultText != "Select provider:" {
-			t.Fatalf("default text = %q, want Select provider:", defaultText)
+		if defaultText != "Select provider" {
+			t.Fatalf("default text = %q, want Select provider", defaultText)
 		}
 		return "allanime", nil
 	}

@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -69,6 +70,9 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.out
           fail_ci_if_error: false
+
+      - name: Run e2e tests
+        run: go test -tags=e2e -race -count=1 -timeout 60s ./test/e2e/
 
   live-download:
     name: Build & Live Download

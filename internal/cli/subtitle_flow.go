@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/pterm/pterm"
 
-	"github.com/distiled/orphion/internal/app"
-	"github.com/distiled/orphion/internal/common"
-	"github.com/distiled/orphion/internal/paths"
-	"github.com/distiled/orphion/internal/subtitle"
+	"github.com/bibimoni/orphion/internal/app"
+	"github.com/bibimoni/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/paths"
+	"github.com/bibimoni/orphion/internal/subtitle"
 )
 
 // SubtitleFlowConfig controls the behavior of the subtitle selection flow.
@@ -26,12 +27,16 @@ type SubtitleFlowConfig struct {
 	// SkipConfirm skips the "Download subtitles?" confirmation prompt.
 	// Used in standalone mode where the user already expressed intent.
 	SkipConfirm bool
+
+	// Episodes contains episode numbers selected in the anime download flow.
+	// When set, matching subtitle entries are selected automatically.
+	Episodes []string
 }
 
 // SubtitleFlowResult holds the result of a completed subtitle flow.
 type SubtitleFlowResult struct {
-	Subtitle *subtitle.Subtitle // chosen subtitle (nil if canceled)
-	OutDir   string             // output directory for the subtitle
+	Subtitles []subtitle.Subtitle // chosen subtitles (empty if canceled)
+	OutDir    string              // output directory for the subtitles
 }
 
 // RunSubtitleFlow executes the full subtitle selection flow:
@@ -39,7 +44,7 @@ type SubtitleFlowResult struct {
 //  2. Search & auto-match or manual pick
 //  3. Season selection (if needed)
 //  4. Language filtering
-//  5. Table display + subtitle file selection
+//  5. Episode-aware matching or subtitle file selection
 //  6. Output folder selection
 //
 // Returns nil result (no error) if the user cancels at any step.
@@ -65,7 +70,7 @@ func RunSubtitleFlow(ctx context.Context, service *app.Service, cfg SubtitleFlow
 		if !isTerminal(os.Stdin) {
 			return nil, fmt.Errorf("query required in non-interactive mode")
 		}
-		q, err := pterm.DefaultInteractiveTextInput.WithDefaultText("Search subtitles: ").Show()
+		q, err := pterm.DefaultInteractiveTextInput.WithDefaultText("Search subtitles").Show()
 		if err != nil {
 			return nil, fmt.Errorf("input: %w", err)
 		}
@@ -90,7 +95,7 @@ func RunSubtitleFlow(ctx context.Context, service *app.Service, cfg SubtitleFlow
 	if chosenResult == nil {
 		return nil, nil
 	}
-	pterm.Success.Printfln("Found subtitle result: %s", chosenResult.Title)
+	pterm.Success.Printfln("Matched subtitles: %s", resultLabel(*chosenResult))
 
 	// Step 4: Load subtitle page (auto-fetches first season if needed).
 	pageSpinner, _ := pterm.DefaultSpinner.Start("Loading subtitles...")
@@ -109,7 +114,7 @@ func RunSubtitleFlow(ctx context.Context, service *app.Service, cfg SubtitleFlow
 		for i, s := range page.Seasons {
 			seasonOpts[i+1] = s.Name
 		}
-		seasonSel, err := interactiveSelect(seasonOpts, "Select season:")
+		seasonSel, err := interactiveSelect(seasonOpts, "Select season")
 		if err != nil {
 			return nil, fmt.Errorf("season selection: %w", err)
 		}
@@ -128,7 +133,7 @@ func RunSubtitleFlow(ctx context.Context, service *app.Service, cfg SubtitleFlow
 			return nil, fmt.Errorf("load season: %w", err)
 		}
 	} else if len(page.Subtitles) > 0 {
-		pageSpinner.Success(fmt.Sprintf("Found %d subtitle(s)", len(page.Subtitles)))
+		pageSpinner.Success("Subtitles loaded")
 	}
 
 	if len(page.Subtitles) == 0 {
@@ -149,26 +154,22 @@ func RunSubtitleFlow(ctx context.Context, service *app.Service, cfg SubtitleFlow
 		return nil, nil
 	}
 
-	// Step 7: Display subtitle table.
-	tableData := pterm.TableData{{pterm.Cyan("#"), pterm.Cyan("Language"), pterm.Cyan("Quality"), pterm.Cyan("Author"), pterm.Cyan("Downloads")}}
-	for i, sub := range langSubs {
-		tableData = append(tableData, []string{
-			fmt.Sprintf("%d", i+1),
-			sub.Language,
-			sub.Quality,
-			sub.Author,
-			fmt.Sprintf("%d", sub.Downloads),
-		})
+	chosenSubs, missingEpisodes := matchSubtitlesToEpisodes(langSubs, cfg.Episodes)
+	if len(cfg.Episodes) > 0 && len(chosenSubs) > 0 {
+		pterm.Success.Printfln("Matched subtitles for %d/%d selected episode(s)", len(chosenSubs), len(cfg.Episodes))
+		if len(missingEpisodes) > 0 {
+			pterm.Warning.Printfln("No subtitle match for episode(s): %s", strings.Join(missingEpisodes, ", "))
+		}
+		return subtitleFlowResult(baseDirForFlow(service, cfg), query, seasonSlug, chosenSubs)
 	}
-	_ = pterm.DefaultTable.WithHasHeader().WithData(tableData).Render()
 
-	// Step 8: Select subtitle file.
+	// Step 7: Select a subtitle file when episode-aware matching is unavailable.
 	subOpts := make([]string, len(langSubs)+1)
 	subOpts[0] = backOption
 	for i, sub := range langSubs {
 		subOpts[i+1] = subtitleFileLabel(sub)
 	}
-	subSel, err := interactiveSelect(subOpts, "Select subtitle file:")
+	subSel, err := interactiveSelect(subOpts, "Select subtitle file")
 	if err != nil {
 		return nil, fmt.Errorf("subtitle selection: %w", err)
 	}
@@ -187,20 +188,31 @@ func RunSubtitleFlow(ctx context.Context, service *app.Service, cfg SubtitleFlow
 		return nil, fmt.Errorf("invalid subtitle selection")
 	}
 
-	// Step 9: Select output folder.
+	return subtitleFlowResult(
+		baseDirForFlow(service, cfg),
+		query,
+		seasonSlug,
+		[]subtitle.Subtitle{*chosenSub},
+	)
+}
+
+func baseDirForFlow(service *app.Service, cfg SubtitleFlowConfig) string {
 	baseDir := cfg.BaseDir
 	if baseDir == "" {
 		baseDir = service.OutputDir()
 	}
-	baseDir = paths.ExpandTilde(baseDir)
-	outDir, err := selectOutputFolder(baseDir, chosenResult.Title, seasonSlug)
+	return paths.ExpandTilde(baseDir)
+}
+
+func subtitleFlowResult(baseDir, title, seasonSlug string, subs []subtitle.Subtitle) (*SubtitleFlowResult, error) {
+	outDir, err := selectOutputFolder(baseDir, title, seasonSlug)
 	if err != nil {
 		return nil, fmt.Errorf("output folder: %w", err)
 	}
 
 	return &SubtitleFlowResult{
-		Subtitle: chosenSub,
-		OutDir:   outDir,
+		Subtitles: subs,
+		OutDir:    outDir,
 	}, nil
 }
 
@@ -241,7 +253,7 @@ func selectOutputFolder(baseDir, title, seasonSlug string) (string, error) {
 	opts = append(opts, customFolderOption)
 
 	// Show the default path in the prompt text.
-	selected, err := interactiveSelect(opts, fmt.Sprintf("Save to: %s", pterm.LightBlue(defaultPath)))
+	selected, err := interactiveSelect(opts, fmt.Sprintf("Save to %s", pterm.LightBlue(defaultPath)))
 	if err != nil {
 		return "", fmt.Errorf("folder selection: %w", err)
 	}
@@ -251,7 +263,7 @@ func selectOutputFolder(baseDir, title, seasonSlug string) (string, error) {
 		return defaultPath, nil
 	case customFolderOption:
 		custom, err := pterm.DefaultInteractiveTextInput.
-			WithDefaultText("Folder name: ").
+			WithDefaultText("Folder name").
 			Show()
 		if err != nil {
 			return "", fmt.Errorf("custom folder: %w", err)

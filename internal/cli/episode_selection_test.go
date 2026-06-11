@@ -7,7 +7,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/pterm/pterm"
 
-	"github.com/distiled/orphion/internal/provider"
+	"github.com/bibimoni/orphion/internal/provider"
 )
 
 func TestEpisodeOptionUsesSourceMetadata(t *testing.T) {
@@ -49,5 +49,21 @@ func TestEpisodeOptionFallsBackToEpisodeNumber(t *testing.T) {
 	got := episodeOption(provider.Episode{Number: "12"})
 	if got != "Ep 12" {
 		t.Fatalf("episode option = %q, want Ep 12", got)
+	}
+}
+
+func TestSelectInteractiveEpisodesUsesEpisodeLanguageWithoutExtraColon(t *testing.T) {
+	originalSelect := interactiveMultiSelect
+	t.Cleanup(func() { interactiveMultiSelect = originalSelect })
+	interactiveMultiSelect = func(options []string, defaultText string) ([]string, error) {
+		if defaultText != "Select episodes (Enter toggles, Tab confirms)" {
+			t.Fatalf("default text = %q", defaultText)
+		}
+		return []string{options[1]}, nil
+	}
+
+	_, err := selectInteractiveEpisodes([]provider.Episode{{ID: "ep-1", Number: "1"}})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

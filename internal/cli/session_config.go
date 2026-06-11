@@ -7,8 +7,8 @@ import (
 
 	"github.com/pterm/pterm"
 
-	"github.com/distiled/orphion/internal/app"
-	"github.com/distiled/orphion/internal/config"
+	"github.com/bibimoni/orphion/internal/app"
+	"github.com/bibimoni/orphion/internal/config"
 )
 
 // sessionConfig holds config overrides for a single download session.
@@ -41,7 +41,7 @@ func showConfigAndEdit(cfg *config.Config) (*sessionConfig, error) {
 	options := []string{"Continue", "Edit"}
 	choice, err := pterm.DefaultInteractiveSelect.
 		WithOptions(options).
-		WithDefaultText("Config:").
+		WithDefaultText("Download settings").
 		Show()
 	if err != nil {
 		return nil, fmt.Errorf("config selection: %w", err)
@@ -63,7 +63,7 @@ func showConfigAndEdit(cfg *config.Config) (*sessionConfig, error) {
 	pterm.Info.Println("Edit session config (Enter to keep default)")
 
 	outputDir, err := pterm.DefaultInteractiveTextInput.
-		WithDefaultText(fmt.Sprintf("Output dir [%s]: ", cfg.OutputDir)).
+		WithDefaultText(fmt.Sprintf("Output directory [%s]", cfg.OutputDir)).
 		Show()
 	if err == nil {
 		outputDir = strings.TrimSpace(outputDir)
@@ -73,7 +73,7 @@ func showConfigAndEdit(cfg *config.Config) (*sessionConfig, error) {
 	}
 
 	quality, err := pterm.DefaultInteractiveTextInput.
-		WithDefaultText(fmt.Sprintf("Quality [%s]: ", cfg.PreferredQuality)).
+		WithDefaultText(fmt.Sprintf("Quality [%s]", cfg.PreferredQuality)).
 		Show()
 	if err == nil {
 		quality = strings.TrimSpace(quality)
@@ -83,7 +83,7 @@ func showConfigAndEdit(cfg *config.Config) (*sessionConfig, error) {
 	}
 
 	concStr, err := pterm.DefaultInteractiveTextInput.
-		WithDefaultText(fmt.Sprintf("Concurrency (1-4) [%d]: ", cfg.Concurrency)).
+		WithDefaultText(fmt.Sprintf("Concurrency (1-4) [%d]", cfg.Concurrency)).
 		Show()
 	if err == nil {
 		concStr = strings.TrimSpace(concStr)

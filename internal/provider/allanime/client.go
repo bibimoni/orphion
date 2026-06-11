@@ -13,13 +13,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/distiled/orphion/internal/common"
-	"github.com/distiled/orphion/internal/provider"
+	"github.com/bibimoni/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/provider"
 )
 
 const (
@@ -27,6 +28,10 @@ const (
 	episodesQuery = `query($showId: String!) { show(_id: $showId) { _id availableEpisodesDetail } }`
 	streamsQuery  = `query($showId: String!, $translationType: VaildTranslationTypeEnumType!, $episodeString: String!) { episode(showId: $showId, translationType: $translationType, episodeString: $episodeString) { episodeString sourceUrls } }`
 )
+
+// urlRedactionRe matches URLs embedded in Go http error messages.
+// Typical format: Get "https://example.test/path?signed=secret": reason
+var urlRedactionRe = regexp.MustCompile(`"https?://[^"]+"`)
 
 // Client fetches and normalizes AllAnime data.
 type Client struct {
@@ -63,6 +68,13 @@ type redactedRequestError struct {
 }
 
 func (e redactedRequestError) Error() string {
+	if e.err != nil {
+		// Strip URLs from error messages to avoid leaking signed/auth URLs.
+		// Go http errors typically look like: Get "https://...": reason
+		msg := e.err.Error()
+		msg = urlRedactionRe.ReplaceAllString(msg, "<redacted>")
+		return fmt.Sprintf("request failed: %s", msg)
+	}
 	return "request failed"
 }
 

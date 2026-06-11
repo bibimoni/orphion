@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/distiled/orphion/internal/common"
-	"github.com/distiled/orphion/internal/paths"
+	"github.com/bibimoni/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/paths"
 )
 
 // DownloadAndExtract downloads a ZIP file from url and extracts subtitle files

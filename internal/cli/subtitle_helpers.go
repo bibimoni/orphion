@@ -3,14 +3,19 @@ package cli
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
-	"github.com/pterm/pterm"
-
-	"github.com/distiled/orphion/internal/app"
-	"github.com/distiled/orphion/internal/common"
-	"github.com/distiled/orphion/internal/subtitle"
+	"github.com/bibimoni/orphion/internal/app"
+	"github.com/bibimoni/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/subtitle"
 )
+
+var subtitleEpisodePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\bS\d{1,2}E(\d{1,3})\b`),
+	regexp.MustCompile(`(?i)\b(?:E|EP|EPISODE)[ ._-]?(\d{1,3})\b`),
+}
 
 // resultLabel builds a display label for a subtitle search result.
 // It includes the source provider and type when available.
@@ -36,11 +41,17 @@ func matchResultLabel(r subtitle.Result, label string) bool {
 
 // subtitleFileLabel builds a display label for a subtitle file entry.
 func subtitleFileLabel(sub subtitle.Subtitle) string {
-	label := fmt.Sprintf("%s | %s | %s", sub.Language, sub.Quality, sub.Title)
-	if sub.Source != "" {
-		label = fmt.Sprintf("[%s] %s", sub.Source, label)
+	parts := []string{sub.Title}
+	if sub.Quality != "" {
+		parts = append(parts, sub.Quality)
 	}
-	return label
+	if sub.Downloads > 0 {
+		parts = append(parts, fmt.Sprintf("%d downloads", sub.Downloads))
+	}
+	if sub.Author != "" {
+		parts = append(parts, sub.Author)
+	}
+	return strings.Join(parts, " | ")
 }
 
 // filterByLang filters subtitles to those matching the preferred language.
@@ -82,7 +93,6 @@ func selectSubtitleResult(ctx context.Context, service *app.Service, query strin
 		// Single provider — auto-match is safe.
 		matchIdx, matchResult := subtitle.BestMatch(query, ranked)
 		if matchIdx >= 0 {
-			pterm.Success.Printfln("Auto-matched: %s", matchResult.Title)
 			return matchResult, nil
 		}
 	}
@@ -97,7 +107,7 @@ func selectSubtitleResult(ctx context.Context, service *app.Service, query strin
 	for i, r := range ranked {
 		opts[i+1] = resultLabel(r)
 	}
-	selected, err := interactiveSelect(opts, "Select title:")
+	selected, err := interactiveSelect(opts, "Select title")
 	if err != nil {
 		return nil, fmt.Errorf("title selection: %w", err)
 	}
@@ -121,4 +131,52 @@ func uniqueSources(results []subtitle.Result) map[string]bool {
 		}
 	}
 	return m
+}
+
+func matchSubtitlesToEpisodes(subs []subtitle.Subtitle, episodes []string) ([]subtitle.Subtitle, []string) {
+	bestByEpisode := make(map[int]subtitle.Subtitle)
+	for _, sub := range subs {
+		episodeNumber := sub.Episode
+		if episodeNumber <= 0 {
+			episodeNumber = subtitleEpisodeFromTitle(sub.Title)
+		}
+		if episodeNumber <= 0 {
+			continue
+		}
+		current, exists := bestByEpisode[episodeNumber]
+		if !exists || sub.Downloads > current.Downloads {
+			bestByEpisode[episodeNumber] = sub
+		}
+	}
+
+	matched := make([]subtitle.Subtitle, 0, len(episodes))
+	var missing []string
+	for _, episode := range episodes {
+		number, err := strconv.Atoi(strings.TrimSpace(episode))
+		if err != nil || number <= 0 {
+			missing = append(missing, episode)
+			continue
+		}
+		sub, ok := bestByEpisode[number]
+		if !ok {
+			missing = append(missing, episode)
+			continue
+		}
+		matched = append(matched, sub)
+	}
+	return matched, missing
+}
+
+func subtitleEpisodeFromTitle(title string) int {
+	for _, pattern := range subtitleEpisodePatterns {
+		match := pattern.FindStringSubmatch(title)
+		if len(match) != 2 {
+			continue
+		}
+		number, err := strconv.Atoi(match[1])
+		if err == nil && number > 0 {
+			return number
+		}
+	}
+	return 0
 }

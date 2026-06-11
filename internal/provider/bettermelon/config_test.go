@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/distiled/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/common"
 )
 
 func TestDefaultConfig(t *testing.T) {

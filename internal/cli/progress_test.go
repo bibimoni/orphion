@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/distiled/orphion/internal/ffmpeg"
+	"github.com/bibimoni/orphion/internal/ffmpeg"
 )
 
 func TestFormatProgressLineShowsConnecting(t *testing.T) {
@@ -17,6 +17,13 @@ func TestFormatProgressLineShowsConnecting(t *testing.T) {
 	}
 }
 
+func TestFormatProgressLineShowsResolvingStream(t *testing.T) {
+	got := formatProgressLine("1", ffmpeg.Progress{Phase: "resolving"})
+	if !strings.Contains(got, "resolving stream") {
+		t.Fatalf("progress line = %q, want resolving stream phase", got)
+	}
+}
+
 func TestFormatProgressLineShowsSpeedAndSize(t *testing.T) {
 	got := formatProgressLine("1", ffmpeg.Progress{
 		Bytes:      1024,
@@ -26,6 +33,9 @@ func TestFormatProgressLineShowsSpeedAndSize(t *testing.T) {
 
 	if !strings.Contains(got, "2.5x") {
 		t.Fatalf("progress line = %q, want speed", got)
+	}
+	if strings.Contains(got, "2.5x/s") {
+		t.Fatalf("progress line = %q, playback speed must not be shown as bytes per second", got)
 	}
 	if !strings.Contains(got, "1.0 KiB / 9.1 GiB") {
 		t.Fatalf("progress line = %q, want downloaded and total", got)

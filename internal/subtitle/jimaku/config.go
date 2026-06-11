@@ -16,7 +16,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/distiled/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/common"
 )
 
 // Config holds configuration for the jimaku.cc client.
@@ -29,6 +29,10 @@ type Config struct {
 
 	// Timeout is the HTTP client timeout.
 	Timeout time.Duration
+
+	// HTTPClient is an optional custom HTTP client.
+	// If nil, a default client is created from the other fields.
+	HTTPClient *http.Client
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -40,8 +44,8 @@ func DefaultConfig() Config {
 	}
 }
 
-// HTTPClient returns an *http.Client configured from the Config.
-func (c Config) HTTPClient() *http.Client {
+// defaultHTTPClient returns an *http.Client configured from the Config.
+func (c Config) defaultHTTPClient() *http.Client {
 	return &http.Client{
 		Timeout: c.Timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {

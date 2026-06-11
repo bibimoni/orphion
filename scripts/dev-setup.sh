@@ -94,7 +94,7 @@ cd "$ROOT_DIR"
 
 # Get the version from git, or fall back to "dev"
 VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo "dev")"
-LDFLAGS="-s -w -X github.com/distiled/orphion/internal/cli.Version=$VERSION"
+LDFLAGS="-s -w -X github.com/bibimoni/orphion/internal/cli.Version=$VERSION"
 
 go build -trimpath -ldflags "$LDFLAGS" -o "$ROOT_DIR/dist/$BINARY_NAME" ./cmd/orphion
 ok "Built dist/$BINARY_NAME (version: $VERSION)"

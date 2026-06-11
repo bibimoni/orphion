@@ -9,17 +9,17 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/distiled/orphion/internal/app"
-	"github.com/distiled/orphion/internal/cli"
-	"github.com/distiled/orphion/internal/config"
-	"github.com/distiled/orphion/internal/ffmpeg"
-	"github.com/distiled/orphion/internal/provider"
-	"github.com/distiled/orphion/internal/provider/allanime"
-	"github.com/distiled/orphion/internal/provider/bettermelon"
-	"github.com/distiled/orphion/internal/subtitle"
-	"github.com/distiled/orphion/internal/subtitle/jimaku"
-	"github.com/distiled/orphion/internal/subtitle/kitsunekko"
-	"github.com/distiled/orphion/internal/subtitle/subdl"
+	"github.com/bibimoni/orphion/internal/app"
+	"github.com/bibimoni/orphion/internal/cli"
+	"github.com/bibimoni/orphion/internal/config"
+	"github.com/bibimoni/orphion/internal/ffmpeg"
+	"github.com/bibimoni/orphion/internal/provider"
+	"github.com/bibimoni/orphion/internal/provider/allanime"
+	"github.com/bibimoni/orphion/internal/provider/bettermelon"
+	"github.com/bibimoni/orphion/internal/subtitle"
+	"github.com/bibimoni/orphion/internal/subtitle/jimaku"
+	"github.com/bibimoni/orphion/internal/subtitle/kitsunekko"
+	"github.com/bibimoni/orphion/internal/subtitle/subdl"
 )
 
 func main() {
@@ -164,9 +164,9 @@ func defaultConfigPath() string {
 func classifyError(err error) int {
 	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "usage") || strings.Contains(msg, "invalid") || strings.Contains(msg, "required") || strings.Contains(msg, "not configured") || strings.Contains(msg, "config"):
+	case strings.Contains(msg, "usage") || strings.Contains(msg, "invalid") || strings.Contains(msg, "required") || strings.Contains(msg, "not configured") || strings.Contains(msg, "config") || strings.Contains(msg, "ffmpeg not found"):
 		return 2
-	case strings.Contains(msg, "not found") || strings.Contains(msg, "no results") || strings.Contains(msg, "ambiguous") || strings.Contains(msg, "provider"):
+	case strings.Contains(msg, "not found") || strings.Contains(msg, "no results") || strings.Contains(msg, "ambiguous") || strings.Contains(msg, "provider") || strings.Contains(msg, "no streams") || strings.Contains(msg, "no episodes"):
 		return 3
 	default:
 		return 1

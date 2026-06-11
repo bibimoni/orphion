@@ -4,7 +4,6 @@ package app
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,15 +11,14 @@ import (
 
 	"github.com/pterm/pterm"
 
-	"github.com/distiled/orphion/internal/common"
-	"github.com/distiled/orphion/internal/download"
-	"github.com/distiled/orphion/internal/episode"
-	"github.com/distiled/orphion/internal/ffmpeg"
-	"github.com/distiled/orphion/internal/paths"
-	"github.com/distiled/orphion/internal/provider"
-	"github.com/distiled/orphion/internal/provider/bettermelon"
-	"github.com/distiled/orphion/internal/quality"
-	"github.com/distiled/orphion/internal/subtitle"
+	"github.com/bibimoni/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/download"
+	"github.com/bibimoni/orphion/internal/episode"
+	"github.com/bibimoni/orphion/internal/ffmpeg"
+	"github.com/bibimoni/orphion/internal/paths"
+	"github.com/bibimoni/orphion/internal/provider"
+	"github.com/bibimoni/orphion/internal/quality"
+	"github.com/bibimoni/orphion/internal/subtitle"
 )
 
 // Config holds application service configuration.
@@ -297,11 +295,24 @@ func (s *Service) downloadEpisodeList(ctx context.Context, selected []provider.E
 func (s *Service) executeJob(ctx context.Context, job download.Job) (string, error) {
 	// Notify the UI that we're starting this episode.
 	if s.progressCb != nil {
-		s.progressCb(job.Episode, ffmpeg.Progress{})
+		s.progressCb(job.Episode, ffmpeg.Progress{Phase: "resolving"})
 	}
 
-	// If the provider supports segment-level progress, wire it up
-	// so the UI shows "fetching segments 12/48" during HLS downloads.
+	baseDir := paths.ExpandTilde(s.config.OutputDir)
+	title := job.Title
+	if title == "" {
+		title = "Download"
+	}
+
+	outPath := paths.OutputLayout(baseDir, title, job.Episode)
+	partPath := paths.PartialPath(baseDir, title, job.Episode)
+
+	// Skip before resolving remote streams when the final file already exists.
+	if !s.config.Force {
+		if _, err := os.Stat(outPath); err == nil {
+			return outPath, nil
+		}
+	}
 
 	streams, err := s.provider.Streams(ctx, job.ID)
 	if err != nil {
@@ -320,32 +331,34 @@ func (s *Service) executeJob(ctx context.Context, job download.Job) (string, err
 	}
 	result := quality.Select(s.config.PreferredQty, qualityStreams)
 
-	// Find matching provider stream for URL and headers.
-	var streamURL string
-	var selectedHeaders http.Header
+	// Find the exact provider stream selected by the quality layer.
+	var selectedStream provider.Stream
 	for _, st := range streams {
-		if st.Quality == result.Stream.Quality {
-			streamURL = st.URL
-			selectedHeaders = st.Headers
+		if st.URL == result.Stream.URL {
+			selectedStream = st
 			break
 		}
 	}
-
-	baseDir := paths.ExpandTilde(s.config.OutputDir)
-	title := job.Title
-	if title == "" {
-		title = "Download"
+	if selectedStream.URL == "" {
+		return "", fmt.Errorf("selected stream is unavailable")
 	}
 
-	outPath := paths.OutputLayout(baseDir, title, job.Episode)
-	partPath := paths.PartialPath(baseDir, title, job.Episode)
-
-	// Skip if final file already exists, unless forced.
-	if !s.config.Force {
-		if _, err := os.Stat(outPath); err == nil {
-			return outPath, nil
+	if preparer, ok := s.provider.(provider.StreamPreparer); ok {
+		selectedStream, err = preparer.PrepareStream(ctx, selectedStream, func(done, total int) {
+			if s.progressCb != nil {
+				s.progressCb(job.Episode, ffmpeg.Progress{
+					Phase:         "segments",
+					SegmentsDone:  done,
+					SegmentsTotal: total,
+				})
+			}
+		})
+		if err != nil {
+			return "", fmt.Errorf("prepare stream: %w", err)
 		}
 	}
+	streamURL := selectedStream.URL
+	selectedHeaders := selectedStream.Headers
 
 	if err := os.MkdirAll(filepath.Dir(partPath), 0o755); err != nil {
 		return "", fmt.Errorf("create output dir: %w", err)
@@ -529,15 +542,11 @@ func parseSortKey(s string) float64 {
 	return val
 }
 
-// cleanupTempInput removes local temp files/directories used as ffmpeg input
-// (e.g. bettermelon m3u8 temp directories created by the provider) and
-// closes any associated local HTTP servers used for segment proxying.
+// cleanupTempInput removes local temp files/directories used as ffmpeg input.
 func cleanupTempInput(streamURL string) {
 	if !strings.HasPrefix(streamURL, "file://") {
 		return
 	}
-	// Close the local segment proxy server if one was started.
-	bettermelon.CloseSegmentServers(streamURL)
 
 	path := streamURL[len("file://"):]
 	// If the temp file is inside a bettermelon-m3u8 directory, remove the whole directory.

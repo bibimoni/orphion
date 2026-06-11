@@ -27,7 +27,7 @@ require_text "$GORELEASER" "- linux" "linux release target is missing"
 require_text "$GORELEASER" "- amd64" "amd64 release target is missing"
 require_text "$GORELEASER" "- arm64" "arm64 release target is missing"
 require_text "$GORELEASER" "checksums.txt" "release checksum file is missing"
-require_text "$GORELEASER" "github.com/distiled/orphion/internal/cli.Version={{.Tag}}" \
+require_text "$GORELEASER" "github.com/bibimoni/orphion/internal/cli.Version={{.Tag}}" \
     "version linker flag is missing"
 require_text "$GORELEASER" "draft: false" "release must not remain a draft"
 require_text "$GORELEASER" "prerelease: false" "release must not be a prerelease"
