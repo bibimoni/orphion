@@ -42,11 +42,19 @@ type Runner struct {
 }
 
 // NewRunner creates a new FFmpeg runner.
+// It verifies that the FFmpeg binary is findable on the given path.
 func NewRunner(cfg Config) (*Runner, error) {
 	if cfg.FFmpegPath == "" {
 		return nil, fmt.Errorf("ffmpeg path is required")
 	}
-	return &Runner{config: cfg}, nil
+	// Resolve the binary path. LookPath searches PATH for bare names
+	// and returns the absolute path. For explicit paths, it verifies
+	// the file exists and is executable.
+	p, err := exec.LookPath(cfg.FFmpegPath)
+	if err != nil {
+		return nil, fmt.Errorf("ffmpeg not found at %q: install ffmpeg and ensure it is on your PATH", cfg.FFmpegPath)
+	}
+	return &Runner{config: Config{FFmpegPath: p}}, nil
 }
 
 // Args builds the FFmpeg argument list for a download.
@@ -168,7 +176,10 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "..."
+	if n <= 3 {
+		return s[:n]
+	}
+	return s[:n-3] + "..."
 }
 
 // ExecuteWithProgress runs the FFmpeg binary and calls fn with progress updates
@@ -178,11 +189,11 @@ func (r *Runner) ExecuteWithProgress(ctx context.Context, args []string, fn Prog
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return fmt.Errorf("create stderr pipe: %w", err)
+		return fmt.Errorf("ffmpeg: create stderr pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start ffmpeg: %w", err)
+		return fmt.Errorf("ffmpeg: start: %w", err)
 	}
 
 	done := make(chan struct{})

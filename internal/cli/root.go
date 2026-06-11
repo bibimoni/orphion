@@ -283,13 +283,21 @@ func formatProgressLine(episode string, progress ffmpeg.Progress) string {
 		speed = "..."
 	}
 
-	size := formatBytes(progress.Bytes)
-	if progress.TotalBytes > 0 {
-		size = fmt.Sprintf("%s / %s", size, formatBytes(progress.TotalBytes))
+	// Build size string; omit when no download data yet.
+	var size string
+	if progress.Bytes > 0 || progress.TotalBytes > 0 {
+		size = formatBytes(progress.Bytes)
+		if progress.TotalBytes > 0 {
+			size = fmt.Sprintf("%s / %s", size, formatBytes(progress.TotalBytes))
+		}
 	}
 
-	return fmt.Sprintf("%s Episode %s  %s  %s",
-		pterm.Cyan("↓"), episode, pterm.Yellow(speed), size)
+	if size != "" {
+		return fmt.Sprintf("%s Episode %s  %s  %s",
+			pterm.Cyan("↓"), episode, pterm.Yellow(speed), size)
+	}
+	return fmt.Sprintf("%s Episode %s  %s",
+		pterm.Cyan("↓"), episode, pterm.Yellow(speed))
 }
 
 // progressBar renders a text progress bar like [████░░░░░░].
