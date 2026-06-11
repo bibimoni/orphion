@@ -19,8 +19,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/distiled/orphion/internal/common"
-	"github.com/distiled/orphion/internal/provider"
+	"github.com/bibimoni/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/provider"
 )
 
 const (

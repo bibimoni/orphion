@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/distiled/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/common"
 )
 
 // BestMatch finds the Result whose title best matches the query.

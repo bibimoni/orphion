@@ -9,17 +9,17 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/distiled/orphion/internal/app"
-	"github.com/distiled/orphion/internal/cli"
-	"github.com/distiled/orphion/internal/config"
-	"github.com/distiled/orphion/internal/ffmpeg"
-	"github.com/distiled/orphion/internal/provider"
-	"github.com/distiled/orphion/internal/provider/allanime"
-	"github.com/distiled/orphion/internal/provider/bettermelon"
-	"github.com/distiled/orphion/internal/subtitle"
-	"github.com/distiled/orphion/internal/subtitle/jimaku"
-	"github.com/distiled/orphion/internal/subtitle/kitsunekko"
-	"github.com/distiled/orphion/internal/subtitle/subdl"
+	"github.com/bibimoni/orphion/internal/app"
+	"github.com/bibimoni/orphion/internal/cli"
+	"github.com/bibimoni/orphion/internal/config"
+	"github.com/bibimoni/orphion/internal/ffmpeg"
+	"github.com/bibimoni/orphion/internal/provider"
+	"github.com/bibimoni/orphion/internal/provider/allanime"
+	"github.com/bibimoni/orphion/internal/provider/bettermelon"
+	"github.com/bibimoni/orphion/internal/subtitle"
+	"github.com/bibimoni/orphion/internal/subtitle/jimaku"
+	"github.com/bibimoni/orphion/internal/subtitle/kitsunekko"
+	"github.com/bibimoni/orphion/internal/subtitle/subdl"
 )
 
 func main() {

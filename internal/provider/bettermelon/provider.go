@@ -3,7 +3,7 @@ package bettermelon
 import (
 	"context"
 
-	"github.com/distiled/orphion/internal/provider"
+	"github.com/bibimoni/orphion/internal/provider"
 )
 
 // Provider implements the normalized provider contract.

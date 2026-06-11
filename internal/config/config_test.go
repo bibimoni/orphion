@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/distiled/orphion/internal/paths"
+	"github.com/bibimoni/orphion/internal/paths"
 )
 
 func TestSetDefaults(t *testing.T) {

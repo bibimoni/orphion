@@ -3,9 +3,9 @@ package cli
 import (
 	"testing"
 
-	"github.com/distiled/orphion/internal/ffmpeg"
-	"github.com/distiled/orphion/internal/provider"
-	"github.com/distiled/orphion/internal/subtitle"
+	"github.com/bibimoni/orphion/internal/ffmpeg"
+	"github.com/bibimoni/orphion/internal/provider"
+	"github.com/bibimoni/orphion/internal/subtitle"
 )
 
 func TestFormatBytes(t *testing.T) {

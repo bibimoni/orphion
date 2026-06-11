@@ -1,4 +1,4 @@
-module github.com/distiled/orphion
+module github.com/bibimoni/orphion
 
 go 1.26.0
 

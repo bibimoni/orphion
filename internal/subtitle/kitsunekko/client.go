@@ -9,9 +9,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/distiled/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/common"
 
-	"github.com/distiled/orphion/internal/subtitle"
+	"github.com/bibimoni/orphion/internal/subtitle"
 )
 
 // Client scrapes the kitsunekko.net Apache directory listings.

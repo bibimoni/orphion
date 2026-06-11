@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/distiled/orphion/internal/common"
-	"github.com/distiled/orphion/internal/subtitle"
+	"github.com/bibimoni/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/subtitle"
 )
 
 // Client scrapes jimaku.cc pages for anime subtitle entries.

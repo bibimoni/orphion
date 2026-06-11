@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/distiled/orphion/internal/app"
-	"github.com/distiled/orphion/internal/common"
-	"github.com/distiled/orphion/internal/subtitle"
+	"github.com/bibimoni/orphion/internal/app"
+	"github.com/bibimoni/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/subtitle"
 )
 
 var subtitleEpisodePatterns = []*regexp.Regexp{

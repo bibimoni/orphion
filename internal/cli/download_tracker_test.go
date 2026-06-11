@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/distiled/orphion/internal/ffmpeg"
+	"github.com/bibimoni/orphion/internal/ffmpeg"
 )
 
 func TestDownloadTrackerUpdateAndDone(t *testing.T) {

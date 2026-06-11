@@ -20,8 +20,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/distiled/orphion/internal/common"
-	"github.com/distiled/orphion/internal/provider"
+	"github.com/bibimoni/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/provider"
 )
 
 // availableProviders is the list of upstream Bettermelon providers in fallback order.

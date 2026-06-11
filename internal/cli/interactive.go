@@ -11,11 +11,11 @@ import (
 	"github.com/pterm/pterm/putils"
 	"github.com/spf13/cobra"
 
-	"github.com/distiled/orphion/internal/app"
-	"github.com/distiled/orphion/internal/common"
-	"github.com/distiled/orphion/internal/config"
-	"github.com/distiled/orphion/internal/ffmpeg"
-	"github.com/distiled/orphion/internal/provider"
+	"github.com/bibimoni/orphion/internal/app"
+	"github.com/bibimoni/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/config"
+	"github.com/bibimoni/orphion/internal/ffmpeg"
+	"github.com/bibimoni/orphion/internal/provider"
 )
 
 // imeArtifactRe matches common IME/terminal escape artifacts that pterm

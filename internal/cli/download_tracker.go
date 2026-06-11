@@ -7,7 +7,7 @@ import (
 
 	"github.com/pterm/pterm"
 
-	"github.com/distiled/orphion/internal/ffmpeg"
+	"github.com/bibimoni/orphion/internal/ffmpeg"
 )
 
 // episodeState tracks the display state of a single episode download.

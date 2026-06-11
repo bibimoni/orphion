@@ -7,7 +7,7 @@ import (
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 
-	"github.com/distiled/orphion/internal/app"
+	"github.com/bibimoni/orphion/internal/app"
 )
 
 const (
