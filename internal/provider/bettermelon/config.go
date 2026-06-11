@@ -18,7 +18,7 @@ type Config struct {
 	Timeout        time.Duration
 	HTTPClient     *http.Client
 	Provider       string // upstream provider: "hianime", "animekai", "kickassanime", "anikoto"
-	SegmentWorkers int    // parallel segment download workers (1–64, default 8)
+	SegmentWorkers int    // parallel segment download workers (1–4, default 4)
 }
 
 // DefaultConfig returns the production Bettermelon configuration.
