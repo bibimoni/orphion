@@ -25,6 +25,9 @@ func BestMatch(query string, results []Result) (int, *Result) {
 	for i, r := range results {
 		normResult := normalizeTitle(r.Title)
 		score := titleSimilarity(normQuery, normResult, queryTokens)
+		if score < common.MatchMinScore {
+			continue
+		}
 
 		// Bonus for matching type (tv shows are more likely what anime users want).
 		if r.Type == "tv" && score > 0 {
@@ -42,8 +45,7 @@ func BestMatch(query string, results []Result) (int, *Result) {
 		}
 	}
 
-	// Require at least minimum similarity to consider it a match.
-	if bestScore < common.MatchMinScore {
+	if bestIdx < 0 {
 		return -1, nil
 	}
 
@@ -75,6 +77,9 @@ func RankResults(query string, results []Result, maxResults int, minScore float6
 	for i, r := range results {
 		normR := normalizeTitle(r.Title)
 		score := titleSimilarity(normQuery, normR, queryTokens)
+		if score < minScore {
+			continue
+		}
 
 		// Bonus for matching type (tv shows are more likely what anime users want).
 		if r.Type == "tv" && score > 0 {
@@ -85,9 +90,7 @@ func RankResults(query string, results []Result, maxResults int, minScore float6
 			score += common.MatchSubCountBonus
 		}
 
-		if score >= minScore {
-			ranked = append(ranked, scored{idx: i, score: score})
-		}
+		ranked = append(ranked, scored{idx: i, score: score})
 	}
 
 	sort.Slice(ranked, func(i, j int) bool {
@@ -150,6 +153,12 @@ func titleSimilarity(normQuery, normResult string, queryTokens []string) float64
 		return 1.0
 	}
 
+	// Treat spacing-only differences as near-exact matches, such as
+	// "SteinsGate" and "Steins Gate".
+	if strings.ReplaceAll(normQuery, " ", "") == strings.ReplaceAll(normResult, " ", "") {
+		return 0.98
+	}
+
 	// Check if one is a substring of the other.
 	if strings.Contains(normResult, normQuery) || strings.Contains(normQuery, normResult) {
 		longer := float64(max(len(normQuery), len(normResult)))
@@ -158,14 +167,64 @@ func titleSimilarity(normQuery, normResult string, queryTokens []string) float64
 	}
 
 	// Token-based overlap score.
-	resultTokens := tokenize(normResult)
+	queryTokens = meaningfulTitleTokens(queryTokens)
+	resultTokens := meaningfulTitleTokens(tokenize(normResult))
 	tokenScore := tokenOverlap(queryTokens, resultTokens)
 
 	// Character-level n-gram similarity for partial matches.
 	charScore := bigramSimilarity(normQuery, normResult)
 
+	// For multi-word titles, one shared word is too weak to establish a
+	// semantic match. This rejects results such as "Hero Bank" for
+	// "Sentenced to Be a Hero" while preserving typos across two title words.
+	if len(queryTokens) >= 2 && tokenMatchCount(queryTokens, resultTokens) < 2 {
+		return common.CharWeight * charScore
+	}
+
 	// Weight token overlap more heavily (it captures semantic similarity better).
 	return common.TokenWeight*tokenScore + common.CharWeight*charScore
+}
+
+var titleStopWords = map[string]bool{
+	"a": true, "an": true, "and": true, "are": true, "at": true,
+	"be": true, "by": true, "for": true, "from": true, "in": true,
+	"is": true, "no": true, "of": true, "on": true, "or": true,
+	"the": true, "to": true, "with": true,
+}
+
+func meaningfulTitleTokens(tokens []string) []string {
+	filtered := make([]string, 0, len(tokens))
+	for _, token := range tokens {
+		if !titleStopWords[token] {
+			filtered = append(filtered, token)
+		}
+	}
+	if len(filtered) == 0 {
+		return tokens
+	}
+	return filtered
+}
+
+func tokenMatchCount(query, result []string) int {
+	resultSet := make(map[string]bool, len(result))
+	for _, token := range result {
+		resultSet[token] = true
+	}
+
+	count := 0
+	for _, queryToken := range query {
+		if resultSet[queryToken] {
+			count++
+			continue
+		}
+		for _, resultToken := range result {
+			if fuzzyTokenMatch(queryToken, resultToken) {
+				count++
+				break
+			}
+		}
+	}
+	return count
 }
 
 // tokenOverlap computes the Jaccard-like overlap between two token sets,
@@ -190,7 +249,7 @@ func tokenOverlap(query, result []string) float64 {
 			// Fuzzy: check if any result token is within edit distance 1.
 			// This catches near-matches like "stein" ↔ "steins".
 			for _, r := range result {
-				if editDistanceWithin(t, r, common.FuzzyEditDistance) {
+				if fuzzyTokenMatch(t, r) {
 					matched += common.FuzzyTokenCredit // partial credit for fuzzy match
 					break
 				}
@@ -214,7 +273,7 @@ func tokenOverlap(query, result []string) float64 {
 		} else {
 			// Fuzzy precision match.
 			for _, q := range query {
-				if editDistanceWithin(q, t, common.FuzzyEditDistance) {
+				if fuzzyTokenMatch(q, t) {
 					precMatched += common.FuzzyTokenCredit
 					break
 				}
@@ -228,6 +287,16 @@ func tokenOverlap(query, result []string) float64 {
 		return 0
 	}
 	return 2 * recall * precision / (recall + precision)
+}
+
+func fuzzyTokenMatch(a, b string) bool {
+	// Short tokens are mostly articles, particles, and episode numbers.
+	// Treating one edit as fuzzy equivalence makes unrelated pairs such as
+	// "to"/"no" and "a"/"3" look like meaningful title matches.
+	if len(a) < 4 || len(b) < 4 {
+		return false
+	}
+	return editDistanceWithin(a, b, common.FuzzyEditDistance)
 }
 
 // editDistanceWithin returns true if the edit distance between a and b
@@ -337,25 +406,16 @@ func normalizeTitle(title string) string {
 	return strings.TrimSpace(b.String())
 }
 
-// tokenize splits a normalized title into words.
-// It also produces a merged form (all tokens concatenated) so that
-// queries like "SteinsGate" can match "Steins Gate".
+// tokenize splits a normalized title into unique words.
 func tokenize(norm string) []string {
 	parts := strings.Fields(norm)
 	// Deduplicate while preserving order.
 	seen := make(map[string]bool, len(parts))
-	result := make([]string, 0, len(parts)+1)
+	result := make([]string, 0, len(parts))
 	for _, p := range parts {
 		if !seen[p] {
 			seen[p] = true
 			result = append(result, p)
-		}
-	}
-	// Add merged form so "steinsgate" can match "steins gate".
-	if len(result) > 1 {
-		merged := strings.Join(result, "")
-		if !seen[merged] {
-			result = append(result, merged)
 		}
 	}
 	return result

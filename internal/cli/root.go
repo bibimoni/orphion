@@ -260,6 +260,11 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 }
 
 func formatProgressLine(episode string, progress ffmpeg.Progress) string {
+	if progress.Phase == "resolving" {
+		return fmt.Sprintf("%s Episode %s  resolving stream...",
+			pterm.Cyan("↓"), episode)
+	}
+
 	// Segment download phase (bettermelon and similar HLS providers).
 	if progress.Phase == "segments" && progress.SegmentsTotal > 0 {
 		pct := float64(progress.SegmentsDone) / float64(progress.SegmentsTotal) * 100
@@ -283,7 +288,7 @@ func formatProgressLine(episode string, progress ffmpeg.Progress) string {
 		size = fmt.Sprintf("%s / %s", size, formatBytes(progress.TotalBytes))
 	}
 
-	return fmt.Sprintf("%s Episode %s  %s/s  %s",
+	return fmt.Sprintf("%s Episode %s  %s  %s",
 		pterm.Cyan("↓"), episode, pterm.Yellow(speed), size)
 }
 

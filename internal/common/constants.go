@@ -143,7 +143,7 @@ const (
 	// RankMinScore is the minimum similarity score used by the CLI when
 	// ranking subtitle search results. Results below this score are
 	// excluded from the selection list.
-	RankMinScore = 0.2
+	RankMinScore = 0.35
 
 	// FolderMatchMinScore is the minimum similarity score for FolderMatch
 	// to include a folder name in results.

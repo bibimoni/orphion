@@ -34,3 +34,12 @@ type Provider interface {
 	Episodes(ctx context.Context, animeID string) ([]Episode, error)
 	Streams(ctx context.Context, episodeID string) ([]Stream, error)
 }
+
+// SegmentProgressFunc reports preparation progress for segmented streams.
+type SegmentProgressFunc func(done, total int)
+
+// StreamPreparer is implemented by providers that need to materialize or
+// rewrite a selected stream before FFmpeg can consume it.
+type StreamPreparer interface {
+	PrepareStream(ctx context.Context, stream Stream, progress SegmentProgressFunc) (Stream, error)
+}
