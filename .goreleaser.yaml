@@ -17,7 +17,7 @@ builds:
     ldflags:
       - >-
         -s -w
-        -X github.com/distiled/orphion/internal/cli.Version={{.Tag}}
+        -X github.com/bibimoni/orphion/internal/cli.Version={{.Tag}}
 
 archives:
   - id: orphion
