@@ -893,7 +893,7 @@ func newTestService(t *testing.T) *app.Service {
 	fp := &fakeProvider{}
 	runner, err := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
 	if err != nil {
-		t.Fatalf("create runner: %v", err)
+		t.Skipf("ffmpeg not available: %v", err)
 	}
 	cfg := app.Config{
 		OutputDir:    t.TempDir(),
@@ -912,7 +912,7 @@ func newTestServiceWithSubtitles(t *testing.T, subProv subtitle.Provider) *app.S
 	fp := &fakeProvider{}
 	runner, err := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
 	if err != nil {
-		t.Fatalf("create runner: %v", err)
+		t.Skipf("ffmpeg not available: %v", err)
 	}
 	cfg := app.Config{
 		OutputDir:    t.TempDir(),

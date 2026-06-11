@@ -14,7 +14,10 @@ import (
 func TestService_ProviderNamesWithActiveProviderFirst(t *testing.T) {
 	allanime := &fakeProvider{}
 	bettermelon := &fakeProvider{}
-	r, _ := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	r, err := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	if err != nil {
+		t.Skipf("ffmpeg not available: %v", err)
+	}
 	svc := New(allanime, r, Config{
 		Concurrency:  1,
 		PreferredQty: "1080p",
@@ -37,7 +40,10 @@ func TestService_ProviderNamesWithActiveProviderFirst(t *testing.T) {
 
 func TestService_ProviderNamesOrderedCorrectly(t *testing.T) {
 	custom := &fakeProvider{}
-	r, _ := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	r, err := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	if err != nil {
+		t.Skipf("ffmpeg not available: %v", err)
+	}
 	svc := New(custom, r, Config{
 		Concurrency:  1,
 		PreferredQty: "1080p",
@@ -57,7 +63,7 @@ func TestService_ProviderNamesOrderedCorrectly(t *testing.T) {
 }
 
 func TestService_SetConcurrencyBounds(t *testing.T) {
-	svc := newTestService(&fakeProvider{})
+	svc := newTestService(t, &fakeProvider{})
 
 	// Below minimum → clamped to 1.
 	svc.SetConcurrency(0)
@@ -83,7 +89,7 @@ func TestService_SetConcurrencyBounds(t *testing.T) {
 }
 
 func TestService_SetForce(t *testing.T) {
-	svc := newTestService(&fakeProvider{})
+	svc := newTestService(t, &fakeProvider{})
 
 	if svc.Config().Force {
 		t.Error("Force should default to false")
@@ -99,7 +105,7 @@ func TestService_SetForce(t *testing.T) {
 }
 
 func TestService_SetOutputDir(t *testing.T) {
-	svc := newTestService(&fakeProvider{})
+	svc := newTestService(t, &fakeProvider{})
 	svc.SetOutputDir("/tmp/test-anime")
 	if svc.Config().OutputDir != "/tmp/test-anime" {
 		t.Errorf("OutputDir = %q, want /tmp/test-anime", svc.Config().OutputDir)
@@ -107,7 +113,7 @@ func TestService_SetOutputDir(t *testing.T) {
 }
 
 func TestService_SetPreferredQuality(t *testing.T) {
-	svc := newTestService(&fakeProvider{})
+	svc := newTestService(t, &fakeProvider{})
 	svc.SetPreferredQuality("720p")
 	if svc.Config().PreferredQty != "720p" {
 		t.Errorf("PreferredQty = %q, want 720p", svc.Config().PreferredQty)
@@ -115,7 +121,7 @@ func TestService_SetPreferredQuality(t *testing.T) {
 }
 
 func TestService_SubtitleProviderReturnsNilWhenNotConfigured(t *testing.T) {
-	svc := newTestService(&fakeProvider{})
+	svc := newTestService(t, &fakeProvider{})
 	if svc.SubtitleProvider() != nil {
 		t.Error("SubtitleProvider() should return nil when not configured")
 	}
@@ -123,7 +129,10 @@ func TestService_SubtitleProviderReturnsNilWhenNotConfigured(t *testing.T) {
 
 func TestService_SubtitleProviderReturnsProviderWhenConfigured(t *testing.T) {
 	subProv := &fakeSubtitleProvider{}
-	r, _ := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	r, err := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	if err != nil {
+		t.Skipf("ffmpeg not available: %v", err)
+	}
 	svc := New(&fakeProvider{}, r, Config{
 		Concurrency: 1,
 		SubtitleSrc: subProv,
@@ -134,14 +143,14 @@ func TestService_SubtitleProviderReturnsProviderWhenConfigured(t *testing.T) {
 }
 
 func TestService_SubtitleLangDefaultsToEnglish(t *testing.T) {
-	svc := newTestService(&fakeProvider{})
+	svc := newTestService(t, &fakeProvider{})
 	if svc.SubtitleLang() != common.DefaultSubtitleLang {
 		t.Errorf("SubtitleLang() = %q, want %q", svc.SubtitleLang(), common.DefaultSubtitleLang)
 	}
 }
 
 func TestService_SubtitleLangCanBeOverridden(t *testing.T) {
-	svc := newTestService(&fakeProvider{})
+	svc := newTestService(t, &fakeProvider{})
 	svc.SetSubtitleLang("japanese")
 	if svc.SubtitleLang() != "japanese" {
 		t.Errorf("SubtitleLang() = %q, want japanese", svc.SubtitleLang())
@@ -152,7 +161,7 @@ func TestService_DownloadEpisodesNoEpisodesError(t *testing.T) {
 	fp := &fakeProvider{
 		eps: []provider.Episode{},
 	}
-	svc := newTestService(fp)
+	svc := newTestService(t, fp)
 	_, _, err := svc.DownloadEpisodes(context.Background(), "anime-id", "1", "Test")
 	if err == nil {
 		t.Fatal("expected error for no matching episodes")
@@ -161,7 +170,7 @@ func TestService_DownloadEpisodesNoEpisodesError(t *testing.T) {
 
 func TestService_DownloadEpisodesProviderError(t *testing.T) {
 	fp := &fakeProvider{err: errors.New("provider error")}
-	svc := newTestService(fp)
+	svc := newTestService(t, fp)
 	_, _, err := svc.DownloadEpisodes(context.Background(), "anime-id", "1", "Test")
 	if err == nil {
 		t.Fatal("expected error from provider")
@@ -170,7 +179,7 @@ func TestService_DownloadEpisodesProviderError(t *testing.T) {
 
 func TestService_ResolveIDNoResults(t *testing.T) {
 	fp := &fakeProvider{searches: nil}
-	svc := newTestService(fp)
+	svc := newTestService(t, fp)
 	_, err := svc.ResolveID(context.Background(), "nonexistent", "anime")
 	if err == nil {
 		t.Fatal("expected error for no results")
@@ -184,7 +193,7 @@ func TestService_ResolveIDMultipleResults(t *testing.T) {
 			{ID: "b", Title: "B"},
 		},
 	}
-	svc := newTestService(fp)
+	svc := newTestService(t, fp)
 	_, err := svc.ResolveID(context.Background(), "ambiguous", "anime")
 	if err == nil {
 		t.Fatal("expected error for multiple results")
@@ -192,7 +201,7 @@ func TestService_ResolveIDMultipleResults(t *testing.T) {
 }
 
 func TestService_OutputDirExpandsTilde(t *testing.T) {
-	svc := newTestService(&fakeProvider{})
+	svc := newTestService(t, &fakeProvider{})
 	svc.SetOutputDir("~/Anime")
 	// OutputDir() should expand ~ using paths.ExpandTilde.
 	expanded := svc.OutputDir()
@@ -204,7 +213,10 @@ func TestService_OutputDirExpandsTilde(t *testing.T) {
 func TestService_SetProviderUpdatesProviderName(t *testing.T) {
 	first := &fakeProvider{searches: []provider.Anime{{ID: "1", Title: "First"}}}
 	second := &fakeProvider{searches: []provider.Anime{{ID: "2", Title: "Second"}}}
-	r, _ := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	r, err := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	if err != nil {
+		t.Skipf("ffmpeg not available: %v", err)
+	}
 	svc := New(first, r, Config{
 		Concurrency:  1,
 		PreferredQty: "1080p",
@@ -227,7 +239,7 @@ func TestService_SetProviderUpdatesProviderName(t *testing.T) {
 }
 
 func TestService_SearchSubtitlesNoProviderError(t *testing.T) {
-	svc := newTestService(&fakeProvider{})
+	svc := newTestService(t, &fakeProvider{})
 	_, err := svc.SearchSubtitles(context.Background(), "test")
 	if err == nil {
 		t.Fatal("expected error when subtitle provider not configured")
@@ -235,7 +247,7 @@ func TestService_SearchSubtitlesNoProviderError(t *testing.T) {
 }
 
 func TestService_DownloadSubtitleNoProviderError(t *testing.T) {
-	svc := newTestService(&fakeProvider{})
+	svc := newTestService(t, &fakeProvider{})
 	_, err := svc.DownloadSubtitle(context.Background(), subtitle.Subtitle{ID: 1}, "/tmp")
 	if err == nil {
 		t.Fatal("expected error when subtitle provider not configured")
@@ -249,7 +261,7 @@ func TestService_GetEpisodes(t *testing.T) {
 			{ID: "e2", Number: "2", SortKey: 2.0},
 		},
 	}
-	svc := newTestService(fp)
+	svc := newTestService(t, fp)
 	eps, err := svc.GetEpisodes(context.Background(), "anime-id")
 	if err != nil {
 		t.Fatal(err)
@@ -260,7 +272,7 @@ func TestService_GetEpisodes(t *testing.T) {
 }
 
 func TestService_SubtitlePageNoProviderError(t *testing.T) {
-	svc := newTestService(&fakeProvider{})
+	svc := newTestService(t, &fakeProvider{})
 	_, err := svc.SubtitlePage(context.Background(), "sd1", "naruto", "")
 	if err == nil {
 		t.Fatal("expected error when subtitle provider not configured")

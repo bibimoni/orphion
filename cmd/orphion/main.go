@@ -54,8 +54,7 @@ func main() {
 
 	runner, err := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: cfg.FFmpegPath})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "orphion:", err)
-		os.Exit(2)
+		fmt.Fprintf(os.Stderr, "orphion: %v (download commands will be unavailable)\n", err)
 	}
 
 	// Initialize subtitle providers (non-fatal on error).

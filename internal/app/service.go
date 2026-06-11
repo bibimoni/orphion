@@ -364,6 +364,11 @@ func (s *Service) executeJob(ctx context.Context, job download.Job) (string, err
 		return "", fmt.Errorf("create output dir: %w", err)
 	}
 
+	// Guard against nil runner (ffmpeg not installed).
+	if s.runner == nil {
+		return "", fmt.Errorf("ffmpeg runner not available: install ffmpeg and ensure it is on your PATH")
+	}
+
 	// Build FFmpeg args for the selected stream.
 	if s.progressCb != nil {
 		args := s.runner.ProgressArgs(streamURL, partPath, selectedHeaders.Get("Referer"), selectedHeaders.Get("User-Agent"))
