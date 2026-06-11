@@ -70,7 +70,7 @@ func newConfigCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := configInitPath
 			if path == "" {
-				path = fmt.Sprintf("%s/.config/orphion/config.yaml", os.Getenv("HOME"))
+				path = DefaultConfigPath()
 			}
 			if err := config.Init(path); err != nil {
 				return err
@@ -347,7 +347,7 @@ func isTerminal(f *os.File) bool {
 
 // outputDirFor extracts the directory portion of a file path.
 func outputDirFor(filePath string) string {
-	if idx := strings.LastIndexByte(filePath, '/'); idx >= 0 {
+	if idx := strings.LastIndexAny(filePath, "/\\"); idx >= 0 {
 		return filePath[:idx]
 	}
 	return filePath

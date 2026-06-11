@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/bibimoni/orphion/internal/app"
 	"github.com/bibimoni/orphion/internal/cli"
@@ -25,7 +23,7 @@ import (
 func main() {
 	ctx, cancel := signal.NotifyContext(
 		context.Background(),
-		os.Interrupt, syscall.SIGTERM,
+		shutdownSignals()...,
 	)
 	defer cancel()
 
@@ -150,14 +148,6 @@ func handleError(ctx context.Context, err error) {
 	}
 	fmt.Fprintln(os.Stderr, "orphion:", err)
 	os.Exit(classifyError(err))
-}
-
-func defaultConfigPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".config", "orphion", "config.yaml")
 }
 
 func classifyError(err error) int {
