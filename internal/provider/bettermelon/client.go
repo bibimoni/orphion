@@ -34,6 +34,10 @@ const (
 
 var resolutionPattern = regexp.MustCompile(`(?i)(?:^|,)RESOLUTION=\d+x(\d+)(?:,|$)`)
 
+// urlRedactionRe matches URLs embedded in Go http error messages.
+// Typical format: Get "https://example.test/path?signed=secret": reason
+var urlRedactionRe = regexp.MustCompile(`"https?://[^"]+"`)
+
 // episodeRef encodes the opaque episode identifier used between Episodes and Streams.
 type episodeRef struct {
 	AniListID string `json:"a"`
@@ -47,6 +51,13 @@ type redactedRequestError struct {
 }
 
 func (e redactedRequestError) Error() string {
+	if e.err != nil {
+		msg := e.err.Error()
+		// Strip any URLs that may be embedded in the underlying error
+		// (e.g. "Get \"https://...\": connection refused").
+		msg = urlRedactionRe.ReplaceAllString(msg, "<redacted>")
+		return fmt.Sprintf("request failed: %s", msg)
+	}
 	return "request failed"
 }
 
