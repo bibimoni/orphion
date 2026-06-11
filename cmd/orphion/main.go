@@ -164,9 +164,9 @@ func defaultConfigPath() string {
 func classifyError(err error) int {
 	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "usage") || strings.Contains(msg, "invalid") || strings.Contains(msg, "required") || strings.Contains(msg, "not configured") || strings.Contains(msg, "config"):
+	case strings.Contains(msg, "usage") || strings.Contains(msg, "invalid") || strings.Contains(msg, "required") || strings.Contains(msg, "not configured") || strings.Contains(msg, "config") || strings.Contains(msg, "ffmpeg not found"):
 		return 2
-	case strings.Contains(msg, "not found") || strings.Contains(msg, "no results") || strings.Contains(msg, "ambiguous") || strings.Contains(msg, "provider"):
+	case strings.Contains(msg, "not found") || strings.Contains(msg, "no results") || strings.Contains(msg, "ambiguous") || strings.Contains(msg, "provider") || strings.Contains(msg, "no streams") || strings.Contains(msg, "no episodes"):
 		return 3
 	default:
 		return 1
