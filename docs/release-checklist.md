@@ -25,7 +25,7 @@ Use this checklist before publishing a new Orphion release.
 - [ ] Version in `internal/cli.Version` is set via ldflags (no hardcoded version)
 - [ ] Go version in `.go-version` matches `go.mod` toolchain directive
 - [ ] `.goreleaser.yaml` targets darwin/linux, amd64/arm64
-- [ ] `.goreleaser.yaml` ldflags include `-X github.com/distiled/orphion/internal/cli.Version={{.Tag}}`
+- [ ] `.goreleaser.yaml` ldflags include `-X github.com/bibimoni/orphion/internal/cli.Version={{.Tag}}`
 
 ## CI / Automation
 
