@@ -20,11 +20,19 @@
 <h1 align="center">Orphion</h1>
 
   <p align="center">
-    A command-line tool to search an anime source and download<br/>
-    selected episodes as MKV files via system FFmpeg.
+    Search, select, and download anime and drama episodes from your terminal.<br/>
+    Interactive TUI or fully scriptable CLI — powered by system FFmpeg.
     <br />
     <br />
-    <a href="#usage"><strong>Explore the docs »</strong></a>
+    <a href="#features"><strong>Features</strong></a>
+    ·
+    <a href="#getting-started"><strong>Install</strong></a>
+    ·
+    <a href="#usage"><strong>Usage</strong></a>
+    ·
+    <a href="docs/troubleshooting.md"><strong>Troubleshooting</strong></a>
+    ·
+    <a href="CONTRIBUTING.md"><strong>Contribute</strong></a>
     <br />
     <br />
   </p>
@@ -33,10 +41,23 @@
 <!-- ABOUT THE PROJECT -->
 ## About The Project
 
-Orphion is a Go CLI that searches a catalog provider for anime
-and drama content, then downloads selected episodes as MKV
-files. It supports interactive prompts and non-interactive
-command-line flags backed by the same application services.
+Orphion is a Go CLI that searches catalog providers for anime and drama
+content, then downloads selected episodes as MKV files. It supports
+interactive prompts with an animated TUI and non-interactive command-line
+flags for scripting — all backed by the same core services.
+
+## Features
+
+- **Interactive TUI** — animated search, episode selection, and live download progress
+- **Scriptable CLI** — `search`, `download`, and `subtitles` commands with flags
+- **Multiple providers** — AllAnime and Bettermelon content sources
+- **Episode expressions** — `1-4,7` or `all` for flexible episode selection
+- **Quality selection** — 1080p, 720p, 480p with automatic fallback
+- **Concurrent downloads** — 1–4 parallel episode downloads with live progress
+- **Subtitles** — search and download from SubDL, Kitsunekko, and Jimaku
+- **Episode-aware subtitles** — auto-match subtitles to selected episodes
+- **Auto-configuration** — sensible defaults on first run, no setup required
+- **Cross-platform** — macOS and Linux, amd64 and arm64 binaries
 
 <!-- GETTING STARTED -->
 ## Getting Started
@@ -96,8 +117,9 @@ No configuration is required. On first run, Orphion auto-creates
 output_dir: ~/Anime
 preferred_quality: 1080p
 concurrency: 1
-provider: catalog
+provider: allanime
 ffmpeg_path: ffmpeg
+subtitle_lang: english
 ```
 
 You can also create it explicitly:
@@ -106,10 +128,10 @@ You can also create it explicitly:
 orphion config init
 ```
 
-When using orphion, use can use flags to override configuration values:
+Override configuration values per-session with flags:
 
 ```bash
-orphion download --output /Volumes/Media --quality 720p --concurrency 2 --episodes "1-4"
+orphion download --title "Frieren" --episodes "1-4" --quality 720p --concurrency 2 --output ~/Downloads
 ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -123,7 +145,7 @@ orphion download --output /Volumes/Media --quality 720p --concurrency 2 --episod
 orphion
 ```
 
-Orphion prompts for search text, content type (anime/drama), episode
+Orphion prompts for search text, provider selection, episode
 selection, and quality preferences — with animated spinners, colored
 results, and live download progress.
 
@@ -134,10 +156,24 @@ results, and live download progress.
 | `orphion` | Interactive mode — guided prompts with animated UI |
 | `orphion search "Frieren" --type anime` | Search for titles |
 | `orphion download --title "Frieren" --episodes "1-4"` | Download by search |
-| `orphion download --title-id "catalog:abc123" --episodes "1,3,7"` | Download by ID |
+| `orphion download --title-id "allanime:abc123" --episodes "1,3,7"` | Download by ID |
+| `orphion subtitles "Frieren" --lang english` | Search and download subtitles |
 | `orphion config init` | Create default config |
 | `orphion version` | Show version |
 | `orphion help` | Show all commands |
+
+### Download Flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--title` | Search query to resolve | — |
+| `--title-id` | Content ID (skip search) | — |
+| `--episodes` | Episode expression | — |
+| `--type` | Content type: anime, drama, or both | both |
+| `--quality` | Preferred quality (1080p, 720p, 480p) | 1080p |
+| `--output` | Output directory | ~/Anime |
+| `--concurrency` | Parallel downloads (1–4) | 1 |
+| `--force` | Overwrite existing files | false |
 
 ### Episode Expressions
 
@@ -162,12 +198,47 @@ Downloads use `.part.mkv` during transfer and rename to `.mkv` only on success.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
+<!-- SUBTITLES -->
+## Subtitles
+
+Orphion can search and download subtitles from multiple providers:
+
+```bash
+# Interactive subtitle search
+orphion subtitles "Frieren"
+
+# Specify language
+orphion subtitles "Naruto" --lang english
+
+# Subtitles are also offered during interactive download
+orphion
+```
+
+Supported providers: **SubDL**, **Kitsunekko**, **Jimaku**. See [Providers](docs/providers.md) for details.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- COMMON ISSUES -->
+## Common Issues
+
+| Issue | Fix |
+|-------|-----|
+| `ffmpeg not found` | [Install FFmpeg](#prerequisites) |
+| `No results found` | Try different search terms or [switch providers](docs/providers.md) |
+| `no streams for episode` | Provider may not have that content — try another provider |
+| `.part.mkv` files | Safe to delete — these are incomplete downloads |
+| Config errors | `rm ~/.config/orphion/config.yaml && orphion config init` |
+
+See the full [Troubleshooting Guide](docs/troubleshooting.md) for more solutions.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 <!-- CONTRIBUTING -->
 ## Contributing
 
-Contributions are welcome!
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-### Dev Setup
+### Quick dev setup
 
 ```bash
 git clone https://github.com/bibimoni/orphion.git
@@ -178,14 +249,6 @@ go test -race ./...
 # Pre-commit hooks
 brew install pre-commit
 pre-commit install
-```
-
-### Testing
-
-```bash
-go test -race ./...
-go vet ./...
-golangci-lint run
 ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
