@@ -12,22 +12,24 @@ import (
 
 // Config contains provider-owned upstream settings.
 type Config struct {
-	APIURL     string
-	ProxyURL   string
-	UserAgent  string
-	Timeout    time.Duration
-	HTTPClient *http.Client
-	Provider   string // upstream provider: "hianime", "animekai", "kickassanime", "anikoto"
+	APIURL         string
+	ProxyURL       string
+	UserAgent      string
+	Timeout        time.Duration
+	HTTPClient     *http.Client
+	Provider       string // upstream provider: "hianime", "animekai", "kickassanime", "anikoto"
+	SegmentWorkers int    // parallel segment download workers (1–64, default 8)
 }
 
 // DefaultConfig returns the production Bettermelon configuration.
 func DefaultConfig() Config {
 	return Config{
-		APIURL:    common.BettermelonAPIURL,
-		ProxyURL:  common.BettermelonProxyURL,
-		UserAgent: common.DefaultUserAgent,
-		Timeout:   common.DefaultHTTPTimeout,
-		Provider:  common.BettermelonDefaultProvider,
+		APIURL:         common.BettermelonAPIURL,
+		ProxyURL:       common.BettermelonProxyURL,
+		UserAgent:      common.DefaultUserAgent,
+		Timeout:        common.DefaultHTTPTimeout,
+		Provider:       common.BettermelonDefaultProvider,
+		SegmentWorkers: common.DefaultSegmentWorkers,
 	}
 }
 

@@ -74,6 +74,26 @@ jobs:
       - name: Run e2e tests
         run: go test -tags=e2e -race -count=1 -timeout 60s ./test/e2e/
 
+  test-windows:
+    name: Test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ".go-version"
+          cache: true
+
+      - name: Install FFmpeg
+        run: choco install ffmpeg
+
+      - name: Verify FFmpeg
+        run: ffmpeg -version
+
+      - name: Run tests
+        run: go test -race ./...
+
   live-download:
     name: Build & Live Download
     if: github.event_name == 'pull_request' && github.base_ref == 'main'

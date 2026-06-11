@@ -54,10 +54,11 @@ flags for scripting — all backed by the same core services.
 - **Episode expressions** — `1-4,7` or `all` for flexible episode selection
 - **Quality selection** — 1080p, 720p, 480p with automatic fallback
 - **Concurrent downloads** — 1–4 parallel episode downloads with live progress
+- **Parallel segment fetching** — configurable 1–64 workers for HLS segment download
 - **Subtitles** — search and download from SubDL, Kitsunekko, and Jimaku
 - **Episode-aware subtitles** — auto-match subtitles to selected episodes
 - **Auto-configuration** — sensible defaults on first run, no setup required
-- **Cross-platform** — macOS and Linux, amd64 and arm64 binaries
+- **Cross-platform** — macOS, Linux, and Windows, amd64 and arm64 binaries
 
 <!-- GETTING STARTED -->
 ## Getting Started
@@ -85,7 +86,18 @@ ffmpeg -version
 
 ### Installation
 
-#### Quick Install (recommended)
+#### Download from Releases (recommended)
+
+Pre-built binaries for **macOS**, **Linux**, and **Windows** are available on the [Releases page](https://github.com/bibimoni/orphion/releases/latest).
+
+1. Go to the [latest release](https://github.com/bibimoni/orphion/releases/latest)
+2. Download the archive for your platform:
+   - **macOS**: `orphion_<version>_darwin_amd64.tar.gz` (Intel) or `orphion_<version>_darwin_arm64.tar.gz` (Apple Silicon)
+   - **Linux**: `orphion_<version>_linux_amd64.tar.gz` or `orphion_<version>_linux_arm64.tar.gz`
+   - **Windows**: `orphion_<version>_windows_amd64.zip` or `orphion_<version>_windows_arm64.zip`
+3. Extract the binary and place it on your `PATH`
+
+#### Quick Install (macOS / Linux)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/bibimoni/orphion/main/install.sh | bash
@@ -120,7 +132,10 @@ concurrency: 1
 provider: allanime
 ffmpeg_path: ffmpeg
 subtitle_lang: english
+segment_workers: 8
 ```
+
+> **Windows note**: The config file is located at `%APPDATA%\orphion\config.yaml`. On macOS and Linux, it is at `~/.config/orphion/config.yaml`.
 
 You can also create it explicitly:
 
@@ -174,6 +189,12 @@ results, and live download progress.
 | `--output` | Output directory | ~/Anime |
 | `--concurrency` | Parallel downloads (1–4) | 1 |
 | `--force` | Overwrite existing files | false |
+
+**Config-only options** (set in `config.yaml`, not available as CLI flags):
+
+| Key | Description | Default |
+|-----|-------------|---------|
+| `segment_workers` | Parallel segment download workers for HLS providers (1–64) | 8 |
 
 ### Episode Expressions
 

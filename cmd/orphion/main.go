@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/bibimoni/orphion/internal/app"
 	"github.com/bibimoni/orphion/internal/cli"
@@ -25,7 +23,7 @@ import (
 func main() {
 	ctx, cancel := signal.NotifyContext(
 		context.Background(),
-		os.Interrupt, syscall.SIGTERM,
+		shutdownSignals()...,
 	)
 	defer cancel()
 
@@ -39,7 +37,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	providers, err := newProviders()
+	providers, err := newProviders(cfg.SegmentWorkers)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orphion: provider:", err)
 		os.Exit(2)
@@ -106,23 +104,25 @@ func main() {
 	}
 }
 
-func newProvider(name string) (provider.Provider, error) {
+func newProvider(name string, segmentWorkers int) (provider.Provider, error) {
 	switch name {
 	case "allanime", "catalog":
 		return allanime.NewProvider(allanime.DefaultConfig())
 	case "bettermelon":
-		return bettermelon.NewProvider(bettermelon.DefaultConfig())
+		cfg := bettermelon.DefaultConfig()
+		cfg.SegmentWorkers = segmentWorkers
+		return bettermelon.NewProvider(cfg)
 	default:
 		return nil, fmt.Errorf("unknown provider %q (available: allanime, bettermelon)", name)
 	}
 }
 
-func newProviders() (map[string]provider.Provider, error) {
-	allanimeProvider, err := newProvider("allanime")
+func newProviders(segmentWorkers int) (map[string]provider.Provider, error) {
+	allanimeProvider, err := newProvider("allanime", segmentWorkers)
 	if err != nil {
 		return nil, err
 	}
-	bettermelonProvider, err := newProvider("bettermelon")
+	bettermelonProvider, err := newProvider("bettermelon", segmentWorkers)
 	if err != nil {
 		return nil, err
 	}
@@ -150,14 +150,6 @@ func handleError(ctx context.Context, err error) {
 	}
 	fmt.Fprintln(os.Stderr, "orphion:", err)
 	os.Exit(classifyError(err))
-}
-
-func defaultConfigPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".config", "orphion", "config.yaml")
 }
 
 func classifyError(err error) int {

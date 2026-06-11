@@ -28,6 +28,12 @@ const (
 
 	// MaxConcurrency is the maximum allowed concurrency.
 	MaxConcurrency = 4
+
+	// DefaultSegmentWorkers is the default number of parallel segment download workers.
+	DefaultSegmentWorkers = 8
+
+	// MaxSegmentWorkers is the maximum number of parallel segment download workers.
+	MaxSegmentWorkers = 64
 )
 
 // ── HTTP & User Agent ─────────────────────────────────────────────────
