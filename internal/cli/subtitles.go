@@ -26,10 +26,11 @@ func newSubtitlesCmd(service *app.Service) *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "subtitles",
-		Short: "Search and download subtitles",
-		Long:  "Search configured subtitle providers and download .srt/.ass files.",
-		Args:  cobra.MaximumNArgs(1),
+		Use:     "subtitles",
+		Short:   "Search and download subtitles",
+		Long:    "Search configured subtitle providers and download .srt/.ass files.",
+		Example: "  orphion subtitles \"Frieren\"\n  orphion subtitles \"Naruto\" --lang spanish",
+		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if service.SubtitleProvider() == nil {
 				return fmt.Errorf("subtitle provider not configured")

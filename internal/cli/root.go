@@ -59,12 +59,14 @@ func newVersionCmd() *cobra.Command {
 
 func newConfigCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "config",
-		Short: "Manage Orphion configuration",
+		Use:     "config",
+		Short:   "Manage Orphion configuration",
+		Example: "  orphion config init",
 	}
 	root.AddCommand(&cobra.Command{
-		Use:   "init",
-		Short: "Create default configuration",
+		Use:     "init",
+		Short:   "Create default configuration",
+		Example: "  orphion config init",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := configInitPath
 			if path == "" {
@@ -83,9 +85,10 @@ func newConfigCmd() *cobra.Command {
 func newSearchCmd(service *app.Service) *cobra.Command {
 	var resType string
 	cmd := &cobra.Command{
-		Use:   "search",
-		Short: "Search for titles",
-		Args:  cobra.MinimumNArgs(1),
+		Use:     "search",
+		Short:   "Search for titles",
+		Example: "  orphion search \"Frieren\" --type anime",
+		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if service == nil {
 				return fmt.Errorf("service not configured")
@@ -145,8 +148,9 @@ func newDownloadCmd(service *app.Service) *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "download",
-		Short: "Download episodes",
+		Use:     "download",
+		Short:   "Download episodes",
+		Example: "  orphion download --title \"Frieren\" --episodes 1-4\n  orphion download --title-id \"allanime:abc123\" --episodes 1,3,7",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if service == nil {
 				return fmt.Errorf("service not configured")
