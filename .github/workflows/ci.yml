@@ -121,6 +121,9 @@ jobs:
           go-version-file: ".go-version"
           cache: true
 
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
       - name: Build pull request binary
         run: |
           mkdir -p build
