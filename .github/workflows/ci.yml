@@ -70,6 +70,9 @@ jobs:
           files: ./coverage.out
           fail_ci_if_error: false
 
+      - name: Run e2e tests
+        run: go test -tags=e2e -race -count=1 -timeout 60s ./test/e2e/
+
   live-download:
     name: Build & Live Download
     if: github.event_name == 'pull_request' && github.base_ref == 'main'

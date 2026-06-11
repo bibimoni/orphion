@@ -38,7 +38,7 @@ Then edit `~/.config/orphion/config.yaml`:
 ffmpeg_path: /usr/local/bin/ffmpeg
 ```
 
-Or use the `--ffmpeg-path` flag is not available directly, but you can set `ffmpeg_path` in config.
+To specify a custom FFmpeg path, set it in your config file (see below).
 
 ---
 
