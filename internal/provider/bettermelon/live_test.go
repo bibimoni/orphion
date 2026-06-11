@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/distiled/orphion/internal/provider"
 )
 
 func TestLiveProviderFrieren(t *testing.T) {
@@ -52,7 +54,7 @@ func TestLiveProviderFrieren(t *testing.T) {
 }
 
 // TestLiveDownload verifies the full end-to-end pipeline:
-// search → episodes → streams → local m3u8 rewrite → ffmpeg download.
+// search → episodes → quality selection → parallel preparation → ffmpeg.
 // It downloads 5 seconds of video and checks the output file exists and is non-empty.
 func TestLiveDownload(t *testing.T) {
 	if os.Getenv("ORPHION_LIVE_PROVIDER_TEST") != "1" {
@@ -70,11 +72,11 @@ func TestLiveDownload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 1. Search for Frieren (AniList ID 154587).
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// 1. Search for Sentenced to Be a Hero (AniList ID 167152).
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	results, err := client.Search(ctx, "154587", "anime")
+	results, err := client.Search(ctx, "167152", "anime")
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -101,8 +103,30 @@ func TestLiveDownload(t *testing.T) {
 	if len(streams) == 0 {
 		t.Fatal("no streams")
 	}
-	stream := streams[0]
-	t.Logf("stream: file://=%v headers=%v", strings.HasPrefix(stream.URL, "file://"), stream.Headers)
+	var stream provider.Stream
+	for _, candidate := range streams {
+		if candidate.Quality == "1080p" {
+			stream = candidate
+			break
+		}
+	}
+	if stream.URL == "" {
+		t.Fatalf("1080p stream not found: %#v", streams)
+	}
+	t.Logf("selected stream: quality=%s file://=%v", stream.Quality, strings.HasPrefix(stream.URL, "file://"))
+
+	var preparedDone, preparedTotal int
+	stream, err = client.PrepareStream(ctx, stream, func(done, total int) {
+		preparedDone, preparedTotal = done, total
+	})
+	if err != nil {
+		t.Fatalf("prepare stream: %v", err)
+	}
+	defer cleanupStreamTemp(stream.URL)
+	if preparedDone == 0 || preparedDone != preparedTotal {
+		t.Fatalf("preparation progress = %d/%d", preparedDone, preparedTotal)
+	}
+	t.Logf("prepared %d resources", preparedTotal)
 
 	// 4. Download 5 seconds with ffmpeg.
 	outDir := t.TempDir()
@@ -139,8 +163,6 @@ func TestLiveDownload(t *testing.T) {
 		cleanupStreamTemp(stream.URL)
 		t.Fatalf("ffmpeg: %v\n%s", err, string(out))
 	}
-	defer cleanupStreamTemp(stream.URL)
-
 	// 5. Verify output file exists and is non-empty.
 	info, err := os.Stat(outFile)
 	if err != nil {
@@ -149,16 +171,33 @@ func TestLiveDownload(t *testing.T) {
 	if info.Size() == 0 {
 		t.Fatal("output file is empty")
 	}
-	t.Logf("download OK: %d bytes in 5s", info.Size())
+
+	probe := exec.CommandContext(
+		ctx,
+		"ffprobe",
+		"-v", "error",
+		"-select_streams", "v:0",
+		"-show_entries", "stream=width,height",
+		"-of", "csv=p=0:s=x",
+		outFile,
+	)
+	dimensions, err := probe.Output()
+	if err != nil {
+		t.Fatalf("ffprobe: %v", err)
+	}
+	for _, got := range strings.Fields(string(dimensions)) {
+		if got != "1920x1080" {
+			t.Fatalf("video dimensions include %s, want only 1920x1080 streams", got)
+		}
+	}
+	t.Logf("download OK: %d bytes in 5s at %s", info.Size(), strings.TrimSpace(string(dimensions)))
 }
 
-// cleanupStreamTemp removes temp m3u8 files created by buildStreams
-// and closes any associated local segment proxy servers.
+// cleanupStreamTemp removes temp m3u8 files created by PrepareStream.
 func cleanupStreamTemp(streamURL string) {
 	if !strings.HasPrefix(streamURL, "file://") {
 		return
 	}
-	CloseSegmentServers(streamURL)
 	path := streamURL[len("file://"):]
 	// If inside a bettermelon-m3u8 temp directory, remove the whole directory.
 	dir := filepath.Dir(path)

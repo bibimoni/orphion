@@ -31,8 +31,8 @@ func TestSelectInteractiveProviderSwitchesProviderWithoutImplyingType(t *testing
 	originalSelect := interactiveSelect
 	t.Cleanup(func() { interactiveSelect = originalSelect })
 	interactiveSelect = func(options []string, defaultText string) (string, error) {
-		if defaultText != "Select provider:" {
-			t.Fatalf("default text = %q, want Select provider:", defaultText)
+		if defaultText != "Select provider" {
+			t.Fatalf("default text = %q, want Select provider", defaultText)
 		}
 		return "allanime", nil
 	}
