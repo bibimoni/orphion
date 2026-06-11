@@ -43,8 +43,12 @@ func (p *fakeProvider) Streams(ctx context.Context, episodeID string) ([]provide
 	return p.streams, nil
 }
 
-func newTestService(fp *fakeProvider) *Service {
-	r, _ := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+func newTestService(t *testing.T, fp *fakeProvider) *Service {
+	t.Helper()
+	r, err := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	if err != nil {
+		t.Skipf("ffmpeg not available: %v", err)
+	}
 	return New(fp, r, Config{Concurrency: 1, PreferredQty: "1080p"})
 }
 
@@ -54,7 +58,7 @@ func TestService_Search(t *testing.T) {
 			{ID: "test", Title: "Frieren"},
 		},
 	}
-	svc := newTestService(fp)
+	svc := newTestService(t, fp)
 	result, err := svc.Search(context.Background(), "frieren", "anime")
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +75,10 @@ func TestService_SetProviderSwitchesSearchProvider(t *testing.T) {
 	second := &fakeProvider{
 		searches: []provider.Anime{{ID: "second", Title: "Second"}},
 	}
-	r, _ := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	r, err := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	if err != nil {
+		t.Skipf("ffmpeg not available: %v", err)
+	}
 	svc := New(first, r, Config{
 		Concurrency:  1,
 		PreferredQty: "1080p",
@@ -105,7 +112,7 @@ func TestService_SetProviderSwitchesSearchProvider(t *testing.T) {
 
 func TestService_SetProviderRejectsUnknownProvider(t *testing.T) {
 	fp := &fakeProvider{}
-	svc := newTestService(fp)
+	svc := newTestService(t, fp)
 
 	err := svc.SetProvider("missing")
 	if err == nil {
@@ -119,7 +126,7 @@ func TestService_ResolveID(t *testing.T) {
 			{ID: "ep1", Title: "Frieren"},
 		},
 	}
-	svc := newTestService(fp)
+	svc := newTestService(t, fp)
 	id, err := svc.ResolveID(context.Background(), "frieren", "anime")
 	if err != nil {
 		t.Fatal(err)
@@ -156,7 +163,7 @@ func TestService_DownloadEpisodes(t *testing.T) {
 			{URL: "https://example.com/1080.m3u8", Quality: "1080p"},
 		},
 	}
-	svc := newTestService(fp)
+	svc := newTestService(t, fp)
 	ctx := context.Background()
 
 	result, raw, err := svc.DownloadEpisodes(ctx, "anime-id", "1-2", "Test Title")
@@ -177,7 +184,7 @@ func TestService_DownloadSelectedEpisodesUsesProvidedEpisodeIDs(t *testing.T) {
 			{URL: "https://example.com/1080.m3u8", Quality: "1080p"},
 		},
 	}
-	svc := newTestService(fp)
+	svc := newTestService(t, fp)
 	svc.SetOutputDir(tmp)
 
 	selected := []provider.Episode{
@@ -211,7 +218,7 @@ func TestService_DownloadSelectedEpisodesUsesProvidedEpisodeIDs(t *testing.T) {
 
 func TestService_ErrorPropagation(t *testing.T) {
 	fp := &fakeProvider{err: errors.New("provider error")}
-	svc := newTestService(fp)
+	svc := newTestService(t, fp)
 
 	_, err := svc.Search(context.Background(), "test", "anime")
 	if err == nil {
@@ -244,7 +251,10 @@ func TestService_SubtitleProvider(t *testing.T) {
 			{ID: "sd1", Title: "Naruto", Type: "tv", Year: 2002, Slug: "naruto"},
 		},
 	}
-	r, _ := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	r, err := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	if err != nil {
+		t.Skipf("ffmpeg not available: %v", err)
+	}
 	svc := New(&fakeProvider{}, r, Config{
 		Concurrency: 1,
 		SubtitleSrc: subProv,
@@ -257,7 +267,7 @@ func TestService_SubtitleProvider(t *testing.T) {
 
 func TestService_SubtitleLang(t *testing.T) {
 	fp := &fakeProvider{}
-	svc := newTestService(fp)
+	svc := newTestService(t, fp)
 
 	// Default should be "english".
 	if got := svc.SubtitleLang(); got != "english" {
@@ -276,7 +286,10 @@ func TestService_SearchSubtitles(t *testing.T) {
 			{ID: "sd1", Title: "Naruto", Type: "tv", Slug: "naruto"},
 		},
 	}
-	r, _ := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	r, err := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	if err != nil {
+		t.Skipf("ffmpeg not available: %v", err)
+	}
 	svc := New(&fakeProvider{}, r, Config{
 		Concurrency: 1,
 		SubtitleSrc: subProv,
@@ -292,7 +305,7 @@ func TestService_SearchSubtitles(t *testing.T) {
 }
 
 func TestService_SearchSubtitlesNoProvider(t *testing.T) {
-	svc := newTestService(&fakeProvider{})
+	svc := newTestService(t, &fakeProvider{})
 	_, err := svc.SearchSubtitles(context.Background(), "test")
 	if err == nil {
 		t.Error("expected error when subtitle provider not configured")
@@ -308,7 +321,10 @@ func TestService_SubtitlePage(t *testing.T) {
 			},
 		},
 	}
-	r, _ := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	r, err := ffmpeg.NewRunner(ffmpeg.Config{FFmpegPath: "ffmpeg"})
+	if err != nil {
+		t.Skipf("ffmpeg not available: %v", err)
+	}
 	svc := New(&fakeProvider{}, r, Config{
 		Concurrency: 1,
 		SubtitleSrc: subProv,
@@ -327,7 +343,7 @@ func TestService_SubtitlePage(t *testing.T) {
 }
 
 func TestService_DownloadSubtitleNoProvider(t *testing.T) {
-	svc := newTestService(&fakeProvider{})
+	svc := newTestService(t, &fakeProvider{})
 	_, err := svc.DownloadSubtitle(context.Background(), subtitle.Subtitle{ID: 1}, "/tmp")
 	if err == nil {
 		t.Error("expected error when subtitle provider not configured")
