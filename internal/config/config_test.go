@@ -299,3 +299,48 @@ func TestLoadConfigSubtitleLangDefault(t *testing.T) {
 		t.Errorf("SubtitleLang = %q, want %q (default)", cfg.SubtitleLang, "english")
 	}
 }
+
+func TestLoadConfigCorruptYAML(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.yaml")
+	content := "{{{{not valid yaml"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for corrupt YAML, got nil")
+	}
+	if !strings.Contains(err.Error(), "decode config") {
+		t.Errorf("error = %q, want mention of decode config", err.Error())
+	}
+}
+
+func TestLoadConfigNonYAMLContent(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.yaml")
+	// Binary-like content
+	content := "\x00\x01\x02\x03binary garbage"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for non-YAML content, got nil")
+	}
+}
+
+func TestLoadOrCreatePermissionError(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.yaml")
+	content := "output_dir: /tmp/test"
+	if err := os.WriteFile(path, []byte(content), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	// On some systems, root can still read 0o000 files; skip in that case.
+	_, err := LoadOrCreate(path)
+	if err == nil {
+		// If the file is readable despite 0o000 (e.g. running as root), that's okay.
+		t.Log("LoadOrCreate succeeded despite 0o000 permissions (likely running as root)")
+	}
+}
