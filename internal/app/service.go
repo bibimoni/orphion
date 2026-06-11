@@ -11,14 +11,14 @@ import (
 
 	"github.com/pterm/pterm"
 
-	"github.com/distiled/orphion/internal/common"
-	"github.com/distiled/orphion/internal/download"
-	"github.com/distiled/orphion/internal/episode"
-	"github.com/distiled/orphion/internal/ffmpeg"
-	"github.com/distiled/orphion/internal/paths"
-	"github.com/distiled/orphion/internal/provider"
-	"github.com/distiled/orphion/internal/quality"
-	"github.com/distiled/orphion/internal/subtitle"
+	"github.com/bibimoni/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/download"
+	"github.com/bibimoni/orphion/internal/episode"
+	"github.com/bibimoni/orphion/internal/ffmpeg"
+	"github.com/bibimoni/orphion/internal/paths"
+	"github.com/bibimoni/orphion/internal/provider"
+	"github.com/bibimoni/orphion/internal/quality"
+	"github.com/bibimoni/orphion/internal/subtitle"
 )
 
 // Config holds application service configuration.

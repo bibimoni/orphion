@@ -16,7 +16,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/distiled/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/common"
 )
 
 // Config holds configuration for the jimaku.cc client.

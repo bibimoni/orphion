@@ -9,8 +9,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/distiled/orphion/internal/common"
-	"github.com/distiled/orphion/internal/paths"
+	"github.com/bibimoni/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/paths"
 )
 
 // Config holds Orphion configuration.

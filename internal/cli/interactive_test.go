@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/distiled/orphion/internal/app"
-	"github.com/distiled/orphion/internal/ffmpeg"
-	"github.com/distiled/orphion/internal/provider"
+	"github.com/bibimoni/orphion/internal/app"
+	"github.com/bibimoni/orphion/internal/ffmpeg"
+	"github.com/bibimoni/orphion/internal/provider"
 )
 
 type interactiveFakeProvider struct {

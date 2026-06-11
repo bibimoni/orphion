@@ -7,8 +7,8 @@ import (
 
 	"github.com/pterm/pterm"
 
-	"github.com/distiled/orphion/internal/app"
-	"github.com/distiled/orphion/internal/config"
+	"github.com/bibimoni/orphion/internal/app"
+	"github.com/bibimoni/orphion/internal/config"
 )
 
 // sessionConfig holds config overrides for a single download session.

@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/distiled/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/common"
 )
 
 // Config contains provider-owned upstream settings.

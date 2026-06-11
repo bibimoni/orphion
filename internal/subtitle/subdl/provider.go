@@ -3,7 +3,7 @@ package subdl
 import (
 	"context"
 
-	"github.com/distiled/orphion/internal/subtitle"
+	"github.com/bibimoni/orphion/internal/subtitle"
 )
 
 // Provider implements the subtitle.Provider interface for SubDL.

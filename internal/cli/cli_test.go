@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/distiled/orphion/internal/cli"
+	"github.com/bibimoni/orphion/internal/cli"
 )
 
 func TestVersion(t *testing.T) {

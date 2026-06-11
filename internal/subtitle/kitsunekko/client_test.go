@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/distiled/orphion/internal/subtitle"
+	"github.com/bibimoni/orphion/internal/subtitle"
 )
 
 func TestParseDirListing(t *testing.T) {

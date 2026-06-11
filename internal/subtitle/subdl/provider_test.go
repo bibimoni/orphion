@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/distiled/orphion/internal/subtitle"
+	"github.com/bibimoni/orphion/internal/subtitle"
 )
 
 func TestNewProviderWithValidConfig(t *testing.T) {

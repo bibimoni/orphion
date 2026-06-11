@@ -3,7 +3,7 @@ package subtitle
 import (
 	"testing"
 
-	"github.com/distiled/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/common"
 )
 
 func TestBestMatch(t *testing.T) {

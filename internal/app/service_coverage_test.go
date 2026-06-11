@@ -5,10 +5,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/distiled/orphion/internal/common"
-	"github.com/distiled/orphion/internal/ffmpeg"
-	"github.com/distiled/orphion/internal/provider"
-	"github.com/distiled/orphion/internal/subtitle"
+	"github.com/bibimoni/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/ffmpeg"
+	"github.com/bibimoni/orphion/internal/provider"
+	"github.com/bibimoni/orphion/internal/subtitle"
 )
 
 func TestService_ProviderNamesWithActiveProviderFirst(t *testing.T) {

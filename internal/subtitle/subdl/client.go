@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/distiled/orphion/internal/common"
-	"github.com/distiled/orphion/internal/subtitle"
+	"github.com/bibimoni/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/subtitle"
 )
 
 var nextDataRe = regexp.MustCompile(`<script id="__NEXT_DATA__"[^>]*>(.*?)</script>`)

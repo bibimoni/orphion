@@ -7,7 +7,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/pterm/pterm"
 
-	"github.com/distiled/orphion/internal/provider"
+	"github.com/bibimoni/orphion/internal/provider"
 )
 
 func TestEpisodeOptionUsesSourceMetadata(t *testing.T) {

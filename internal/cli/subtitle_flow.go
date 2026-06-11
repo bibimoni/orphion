@@ -9,10 +9,10 @@ import (
 
 	"github.com/pterm/pterm"
 
-	"github.com/distiled/orphion/internal/app"
-	"github.com/distiled/orphion/internal/common"
-	"github.com/distiled/orphion/internal/paths"
-	"github.com/distiled/orphion/internal/subtitle"
+	"github.com/bibimoni/orphion/internal/app"
+	"github.com/bibimoni/orphion/internal/common"
+	"github.com/bibimoni/orphion/internal/paths"
+	"github.com/bibimoni/orphion/internal/subtitle"
 )
 
 // SubtitleFlowConfig controls the behavior of the subtitle selection flow.

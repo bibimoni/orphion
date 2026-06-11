@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/distiled/orphion/internal/provider"
+	"github.com/bibimoni/orphion/internal/provider"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

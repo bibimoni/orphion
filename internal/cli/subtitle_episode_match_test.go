@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/distiled/orphion/internal/subtitle"
+	"github.com/bibimoni/orphion/internal/subtitle"
 )
 
 func TestMatchSubtitlesToEpisodesUsesEpisodeMetadataAndBestDownload(t *testing.T) {
