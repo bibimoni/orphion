@@ -802,3 +802,135 @@ func TestStreamsAlreadyProxiedURLIsNotDoubleProxied(t *testing.T) {
 		t.Fatalf("URL = %q, already-proxied URL changed", got[0].URL)
 	}
 }
+
+func TestFetchViaProxyRetriesOn5xx(t *testing.T) {
+	var attempts atomic.Int32
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		n := attempts.Add(1)
+		if n <= 2 {
+			return jsonResponse(http.StatusServiceUnavailable, "temporarily unavailable"), nil
+		}
+		return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nseg1.ts\n#EXT-X-ENDLIST"), nil
+	})
+
+	got, err := client.fetchViaProxy(context.Background(), "https://cdn.example.test/playlist.m3u8")
+	if err != nil {
+		t.Fatalf("fetchViaProxy() error = %v", err)
+	}
+	if !strings.Contains(got, "#EXTM3U") {
+		t.Fatalf("unexpected body = %q", got)
+	}
+	if attempts.Load() != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts.Load())
+	}
+}
+
+func TestFetchViaProxyFailsAfterMaxRetries(t *testing.T) {
+	var attempts atomic.Int32
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		attempts.Add(1)
+		return jsonResponse(521, "web server is down"), nil
+	})
+
+	_, err := client.fetchViaProxy(context.Background(), "https://cdn.example.test/playlist.m3u8")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "521") {
+		t.Fatalf("error = %v, want 521 status", err)
+	}
+	if attempts.Load() != 5 {
+		t.Fatalf("attempts = %d, want 5", attempts.Load())
+	}
+}
+
+func TestFetchViaProxyDoesNotRetry4xx(t *testing.T) {
+	var attempts atomic.Int32
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		attempts.Add(1)
+		return jsonResponse(http.StatusForbidden, "forbidden"), nil
+	})
+
+	_, err := client.fetchViaProxy(context.Background(), "https://cdn.example.test/playlist.m3u8")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "403") {
+		t.Fatalf("error = %v, want 403 status", err)
+	}
+	if attempts.Load() != 1 {
+		t.Fatalf("attempts = %d, want 1 (no retry on 4xx)", attempts.Load())
+	}
+}
+
+func TestDownloadResourceFallsBackToDirectOnProxy403(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "segment-00001.ts")
+
+	var proxyAttempts, directAttempts atomic.Int32
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		// Requests to the proxy host return 403; direct CDN requests succeed.
+		if strings.Contains(req.URL.Host, "example.test") {
+			proxyAttempts.Add(1)
+			return jsonResponse(http.StatusForbidden, "forbidden"), nil
+		}
+		directAttempts.Add(1)
+		return jsonResponse(http.StatusOK, "segment-data"), nil
+	})
+
+	retry, err := client.downloadResourceOnce(context.Background(), localResource{
+		url:  "https://cdn.bettermelon.test/seg1.jpg",
+		path: path,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if retry {
+		t.Fatal("retry = true, want false (success)")
+	}
+	if proxyAttempts.Load() != 1 {
+		t.Fatalf("proxy attempts = %d, want 1", proxyAttempts.Load())
+	}
+	if directAttempts.Load() != 1 {
+		t.Fatalf("direct attempts = %d, want 1 (fallback)", directAttempts.Load())
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if string(data) != "segment-data" {
+		t.Fatalf("file content = %q, want %q", data, "segment-data")
+	}
+}
+
+func TestDownloadResourceNoDirectFallbackWithoutProxy(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "segment-00001.ts")
+
+	var attempts atomic.Int32
+	// Create a client with no proxy URL.
+	cfg := DefaultConfig()
+	cfg.APIURL = "https://api.example.test"
+	cfg.ProxyURL = "" // no proxy
+	cfg.HTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		attempts.Add(1)
+		return jsonResponse(http.StatusForbidden, "forbidden"), nil
+	})}
+	client, err := NewClient(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = client.downloadResourceOnce(context.Background(), localResource{
+		url:  "https://cdn.example.test/seg1.jpg",
+		path: path,
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	// Without proxy, there's no fallback — only one attempt.
+	if attempts.Load() != 1 {
+		t.Fatalf("attempts = %d, want 1 (no fallback without proxy)", attempts.Load())
+	}
+}

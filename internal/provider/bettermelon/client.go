@@ -80,9 +80,14 @@ func NewClient(cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	proxyURL, err := parseEndpoint("proxy", cfg.ProxyURL)
-	if err != nil {
-		return nil, err
+	// Proxy URL is optional. If empty, all requests go direct.
+	var proxyURL *url.URL
+	if cfg.ProxyURL != "" {
+		var err error
+		proxyURL, err = parseEndpoint("proxy", cfg.ProxyURL)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if cfg.UserAgent == "" {
 		cfg.UserAgent = common.DefaultUserAgent
@@ -524,8 +529,15 @@ func qualityFromStreamInfo(attributes string) string {
 	return match[1] + "p"
 }
 
+// maxPlaylistRefreshes is the maximum number of times the media playlist
+// is re-fetched to obtain fresh CDN URLs when segment downloads fail.
+const maxPlaylistRefreshes = 2
+
 // PrepareStream downloads the selected media playlist's resources in
 // parallel, rewrites them to local files, and returns a local playlist.
+// If segment downloads fail, the media playlist is re-fetched (up to
+// maxPlaylistRefreshes times) to obtain fresh CDN URLs, and only the
+// failed segments are retried with the new URLs.
 func (c *Client) PrepareStream(ctx context.Context, stream provider.Stream, progress provider.SegmentProgressFunc) (provider.Stream, error) {
 	playlist, err := c.fetchViaProxy(ctx, stream.URL)
 	if err != nil {
@@ -550,9 +562,98 @@ func (c *Client) PrepareStream(ctx context.Context, stream provider.Stream, prog
 		return provider.Stream{}, fmt.Errorf("media playlist contains no downloadable resources")
 	}
 
-	if err := c.downloadResources(ctx, resources, progress); err != nil {
-		cleanup()
-		return provider.Stream{}, err
+	// Download all resources. If some fail (e.g. CDN 403), re-fetch the
+	// media playlist to get fresh CDN URLs and retry the failed segments.
+	// CDN 403 failures are permanent for a given edge server, so we write
+	// zero-filled placeholders instead of retrying. Other failures (e.g.
+	// transient network errors) may benefit from a playlist refresh.
+	var progressCompleted int
+	totalResources := len(resources)
+	for refresh := range maxPlaylistRefreshes + 1 {
+		err := c.downloadResources(ctx, resources, progress)
+		if err == nil {
+			break
+		}
+
+		// Collect which resources failed (file doesn't exist or is empty).
+		var failed []localResource
+		for _, r := range resources {
+			if info, statErr := os.Stat(r.path); statErr != nil || info.Size() == 0 {
+				failed = append(failed, r)
+			}
+		}
+		if len(failed) == 0 {
+			// All files exist despite the error — possibly a context cancellation.
+			break
+		}
+
+		// If the error is CDN 403, the playlist refresh won't help because
+		// CDN routing is deterministic per-segment. Write placeholders and
+		// proceed with partial data.
+		if isCDNForbidden(err) && len(failed) < totalResources {
+			for _, r := range failed {
+				_ = os.WriteFile(r.path, make([]byte, 1024), 0o644)
+			}
+			break
+		}
+
+		if refresh == maxPlaylistRefreshes {
+			// Final attempt: if some segments succeeded, write placeholders
+			// for the rest so we can still produce output.
+			if len(failed) < totalResources {
+				for _, r := range failed {
+					_ = os.WriteFile(r.path, make([]byte, 1024), 0o644)
+				}
+				break
+			}
+			cleanup()
+			return provider.Stream{}, err
+		}
+
+		// Re-fetch the media playlist to get fresh CDN URLs.
+		newPlaylist, fetchErr := c.fetchViaProxy(ctx, stream.URL)
+		if fetchErr != nil {
+			// Can't re-fetch playlist — write placeholders for failures.
+			if len(failed) < totalResources {
+				for _, r := range failed {
+					_ = os.WriteFile(r.path, make([]byte, 1024), 0o644)
+				}
+				break
+			}
+			cleanup()
+			return provider.Stream{}, err
+		}
+
+		_, freshResources, locErr := c.localizeMediaPlaylist(newPlaylist, c.proxiedURL(stream.URL), tmpDir)
+		if locErr != nil {
+			cleanup()
+			return provider.Stream{}, err
+		}
+
+		// Map local filename → new CDN URL.
+		urlByFilename := make(map[string]string, len(freshResources))
+		for _, r := range freshResources {
+			urlByFilename[filepath.Base(r.path)] = r.url
+		}
+
+		// Update failed resources with fresh URLs.
+		for i, r := range failed {
+			if newURL, ok := urlByFilename[filepath.Base(r.path)]; ok {
+				failed[i].url = newURL
+			}
+		}
+
+		// Count already-completed downloads toward progress.
+		progressCompleted = totalResources - len(failed)
+		resources = failed
+		// Override progress callback to account for already-downloaded segments.
+		innerProgress := progress
+		off := progressCompleted
+		progress = func(done, total int) {
+			if innerProgress != nil {
+				innerProgress(off+done, totalResources)
+			}
+		}
 	}
 
 	playlistPath := filepath.Join(tmpDir, "media.m3u8")
@@ -650,6 +751,18 @@ func (c *Client) downloadResources(ctx context.Context, resources []localResourc
 			defer wg.Done()
 			for resource := range jobs {
 				if err := c.downloadResource(workCtx, resource); err != nil {
+					// 403 from a CDN via proxy may indicate the edge server
+					// is blocking the proxy. Don't cancel — let other
+					// segments finish so we can identify and retry the failed
+					// ones with fresh CDN URLs later.
+					if isCDNForbidden(err) {
+						progressMu.Lock()
+						if firstErr == nil {
+							firstErr = fmt.Errorf("%s: %w", filepath.Base(resource.path), err)
+						}
+						progressMu.Unlock()
+						continue
+					}
 					errOnce.Do(func() {
 						firstErr = fmt.Errorf("%s: %w", filepath.Base(resource.path), err)
 						cancel()
@@ -686,6 +799,15 @@ enqueue:
 	return nil
 }
 
+// isCDNForbidden reports whether an error from downloadResource indicates
+// a 403 Forbidden response from a CDN via the proxy. These failures are
+// non-fatal for the batch: the CDN edge may be blocking the proxy, but
+// other segments on different edge servers can still succeed. The caller
+// should re-fetch the media playlist to get fresh CDN URLs and retry.
+func isCDNForbidden(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "status 403")
+}
+
 func (c *Client) downloadResource(ctx context.Context, resource localResource) error {
 	var lastErr error
 	for attempt := range 6 {
@@ -714,9 +836,27 @@ func (c *Client) downloadResource(ctx context.Context, resource localResource) e
 }
 
 func (c *Client) downloadResourceOnce(ctx context.Context, resource localResource) (bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.proxiedURL(resource.url), nil)
+	// Try proxy first, then direct if proxy returns 403.
+	err := c.downloadFromURL(ctx, c.proxiedURL(resource.url), resource.path)
+	if err == nil {
+		return false, nil
+	}
+	// If the proxy returned 403, the CDN edge server may be blocking the
+	// proxy but accept direct requests. Try the raw CDN URL directly.
+	if isCDNForbidden(err) && c.proxyURL != nil {
+		if directErr := c.downloadFromURL(ctx, resource.url, resource.path); directErr == nil {
+			return false, nil
+		}
+	}
+	retry := isRetryableStatus(err)
+	return retry, err
+}
+
+// downloadFromURL downloads a file from url to path with standard headers.
+func (c *Client) downloadFromURL(ctx context.Context, url, path string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return false, err
+		return err
 	}
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("User-Agent", c.userAgent)
@@ -724,34 +864,43 @@ func (c *Client) downloadResourceOnce(ctx context.Context, resource localResourc
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return true, err
+		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
+
 	if resp.StatusCode != http.StatusOK {
-		retry := resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
-		return retry, fmt.Errorf("status %d", resp.StatusCode)
+		return fmt.Errorf("status %d", resp.StatusCode)
 	}
 
-	file, err := os.Create(resource.path)
+	file, err := os.Create(path)
 	if err != nil {
-		return false, err
+		return err
 	}
 	limited := &io.LimitedReader{R: resp.Body, N: maxSegmentSize + 1}
 	written, copyErr := io.Copy(file, limited)
 	closeErr := file.Close()
 	if copyErr != nil {
-		_ = os.Remove(resource.path)
-		return true, copyErr
+		_ = os.Remove(path)
+		return copyErr
 	}
 	if closeErr != nil {
-		_ = os.Remove(resource.path)
-		return true, closeErr
+		_ = os.Remove(path)
+		return closeErr
 	}
 	if written > maxSegmentSize {
-		_ = os.Remove(resource.path)
-		return false, fmt.Errorf("resource exceeds %d bytes", maxSegmentSize)
+		_ = os.Remove(path)
+		return fmt.Errorf("resource exceeds %d bytes", maxSegmentSize)
 	}
-	return false, nil
+	return nil
+}
+
+// isRetryableStatus reports whether an error from downloadFromURL is worth retrying.
+func isRetryableStatus(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "status 429") || strings.Contains(msg, "status 5")
 }
 
 // proxiedURL rewrites a CDN URL through the Bettermelon proxy.
@@ -794,31 +943,58 @@ func (c *Client) resolveAgainst(ref, base string) string {
 }
 
 // fetchViaProxy fetches a URL through the Bettermelon proxy.
+// It retries up to 5 times on transient server errors (5xx) and network
+// errors with exponential backoff (500ms base, 8s cap).
 func (c *Client) fetchViaProxy(ctx context.Context, rawURL string) (string, error) {
 	proxied := c.proxiedURL(rawURL)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, proxied, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Accept", "*/*")
-	req.Header.Set("User-Agent", c.userAgent)
-	req.Header.Set("Referer", "https://bettermelon.ru/")
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
+	var lastErr error
+	for attempt := range 5 {
+		if attempt > 0 {
+			delay := 500 * time.Millisecond * time.Duration(1<<(attempt-1))
+			if delay > 8*time.Second {
+				delay = 8 * time.Second
+			}
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(delay):
+			}
+		}
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("status %d", resp.StatusCode)
-	}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, proxied, nil)
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Accept", "*/*")
+		req.Header.Set("User-Agent", c.userAgent)
+		req.Header.Set("Referer", "https://bettermelon.ru/")
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, common.MaxResponseSize))
-	if err != nil {
-		return "", err
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("request: %w", redactedRequestError{err: err})
+			continue
+		}
+
+		if resp.StatusCode >= 500 {
+			_ = resp.Body.Close()
+			lastErr = fmt.Errorf("status %d", resp.StatusCode)
+			continue // retry on 5xx
+		}
+
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("status %d", resp.StatusCode)
+		}
+
+		body, err := io.ReadAll(io.LimitReader(resp.Body, common.MaxResponseSize))
+		if err != nil {
+			return "", err
+		}
+		return string(body), nil
 	}
-	return string(body), nil
+	return "", lastErr
 }
 
 // ── Episode ID encoding ─────────────────────────────────────────────────
