@@ -533,13 +533,32 @@ func qualityFromStreamInfo(attributes string) string {
 // is re-fetched to obtain fresh CDN URLs when segment downloads fail.
 const maxPlaylistRefreshes = 2
 
+// fetchPlaylist fetches a media playlist, trying the proxy first and
+// falling back to a direct request if the proxy returns persistent 5xx.
+// It returns the playlist body and the base URL to use for resolving
+// relative segment URLs (proxied or direct depending on which path succeeded).
+func (c *Client) fetchPlaylist(ctx context.Context, streamURL string) (playlist string, baseURL string, err error) {
+	playlist, err = c.fetchViaProxy(ctx, streamURL)
+	if err == nil {
+		return playlist, c.proxiedURL(streamURL), nil
+	}
+	// If proxy failed and we have one configured, try direct.
+	if c.proxyURL != nil {
+		playlist, directErr := c.fetchDirect(ctx, streamURL)
+		if directErr == nil {
+			return playlist, streamURL, nil
+		}
+	}
+	return "", "", err
+}
+
 // PrepareStream downloads the selected media playlist's resources in
 // parallel, rewrites them to local files, and returns a local playlist.
 // If segment downloads fail, the media playlist is re-fetched (up to
 // maxPlaylistRefreshes times) to obtain fresh CDN URLs, and only the
 // failed segments are retried with the new URLs.
 func (c *Client) PrepareStream(ctx context.Context, stream provider.Stream, progress provider.SegmentProgressFunc) (provider.Stream, error) {
-	playlist, err := c.fetchViaProxy(ctx, stream.URL)
+	playlist, baseURL, err := c.fetchPlaylist(ctx, stream.URL)
 	if err != nil {
 		return provider.Stream{}, fmt.Errorf("fetch media playlist: %w", err)
 	}
@@ -552,7 +571,7 @@ func (c *Client) PrepareStream(ctx context.Context, stream provider.Stream, prog
 		_ = os.RemoveAll(tmpDir)
 	}
 
-	rewritten, resources, err := c.localizeMediaPlaylist(playlist, c.proxiedURL(stream.URL), tmpDir)
+	rewritten, resources, err := c.localizeMediaPlaylist(playlist, baseURL, tmpDir)
 	if err != nil {
 		cleanup()
 		return provider.Stream{}, err
@@ -611,7 +630,7 @@ func (c *Client) PrepareStream(ctx context.Context, stream provider.Stream, prog
 		}
 
 		// Re-fetch the media playlist to get fresh CDN URLs.
-		newPlaylist, fetchErr := c.fetchViaProxy(ctx, stream.URL)
+		newPlaylist, newBaseURL, fetchErr := c.fetchPlaylist(ctx, stream.URL)
 		if fetchErr != nil {
 			// Can't re-fetch playlist — write placeholders for failures.
 			if len(failed) < totalResources {
@@ -624,7 +643,7 @@ func (c *Client) PrepareStream(ctx context.Context, stream provider.Stream, prog
 			return provider.Stream{}, err
 		}
 
-		_, freshResources, locErr := c.localizeMediaPlaylist(newPlaylist, c.proxiedURL(stream.URL), tmpDir)
+		_, freshResources, locErr := c.localizeMediaPlaylist(newPlaylist, newBaseURL, tmpDir)
 		if locErr != nil {
 			cleanup()
 			return provider.Stream{}, err
@@ -995,6 +1014,33 @@ func (c *Client) fetchViaProxy(ctx context.Context, rawURL string) (string, erro
 		return string(body), nil
 	}
 	return "", lastErr
+}
+
+// fetchDirect fetches a URL without the proxy, using standard browser headers.
+func (c *Client) fetchDirect(ctx context.Context, rawURL string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("User-Agent", c.userAgent)
+	req.Header.Set("Referer", "https://bettermelon.ru/")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request: %w", redactedRequestError{err: err})
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, common.MaxResponseSize))
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
 }
 
 // ── Episode ID encoding ─────────────────────────────────────────────────

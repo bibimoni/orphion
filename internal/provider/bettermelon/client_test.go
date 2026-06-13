@@ -934,3 +934,52 @@ func TestDownloadResourceNoDirectFallbackWithoutProxy(t *testing.T) {
 		t.Fatalf("attempts = %d, want 1 (no fallback without proxy)", attempts.Load())
 	}
 }
+
+func TestFetchPlaylistFallsBackToDirectOnProxy5xx(t *testing.T) {
+	var proxyAttempts, directAttempts atomic.Int32
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		// Requests to the proxy host (containing "proxy" in the URL path)
+		// return 521; direct CDN requests succeed.
+		if strings.Contains(req.URL.Path, "proxy") || strings.Contains(req.URL.RawQuery, "proxy") {
+			proxyAttempts.Add(1)
+			return jsonResponse(521, "web server is down"), nil
+		}
+		directAttempts.Add(1)
+		return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nseg1.ts\n#EXT-X-ENDLIST"), nil
+	})
+
+	// Simulate proxy being down — fetchViaProxy will retry 5 times on 521,
+	// then fetchPlaylist falls back to direct.
+	playlist, baseURL, err := client.fetchPlaylist(context.Background(), "https://cdn.bettermelon.test/playlist.m3u8")
+	if err != nil {
+		t.Fatalf("fetchPlaylist() error = %v", err)
+	}
+	if !strings.Contains(playlist, "#EXTM3U") {
+		t.Fatalf("unexpected playlist = %q", playlist)
+	}
+	// Base URL should be the raw URL (not proxied) since we fell back to direct.
+	if baseURL != "https://cdn.bettermelon.test/playlist.m3u8" {
+		t.Fatalf("baseURL = %q, want raw CDN URL", baseURL)
+	}
+	if directAttempts.Load() < 1 {
+		t.Fatalf("direct attempts = %d, want at least 1", directAttempts.Load())
+	}
+}
+
+func TestFetchPlaylistReturnsProxiedBaseURLOnProxySuccess(t *testing.T) {
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nseg1.ts\n#EXT-X-ENDLIST"), nil
+	})
+
+	playlist, baseURL, err := client.fetchPlaylist(context.Background(), "https://cdn.bettermelon.test/playlist.m3u8")
+	if err != nil {
+		t.Fatalf("fetchPlaylist() error = %v", err)
+	}
+	if !strings.Contains(playlist, "#EXTM3U") {
+		t.Fatalf("unexpected playlist = %q", playlist)
+	}
+	// When proxy succeeds, base URL should be proxied.
+	if !strings.Contains(baseURL, "proxy") {
+		t.Fatalf("baseURL = %q, want proxied URL", baseURL)
+	}
+}
