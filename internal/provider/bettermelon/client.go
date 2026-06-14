@@ -498,27 +498,88 @@ func (c *Client) buildStreams(ctx context.Context, fileURL string) []provider.St
 
 func (c *Client) masterVariants(manifest, sourceURL string, headers http.Header) []provider.Stream {
 	scanner := bufio.NewScanner(strings.NewReader(manifest))
+	var lines []string
+	for scanner.Scan() {
+		lines = append(lines, strings.TrimSpace(scanner.Text()))
+	}
+
+	audioByGroup := make(map[string]string)
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "#EXT-X-MEDIA:") {
+			continue
+		}
+		attributes := parseHLSAttributes(strings.TrimPrefix(line, "#EXT-X-MEDIA:"))
+		if !strings.EqualFold(attributes["TYPE"], "AUDIO") {
+			continue
+		}
+		groupID := attributes["GROUP-ID"]
+		uri := attributes["URI"]
+		if groupID == "" || uri == "" {
+			continue
+		}
+		if _, exists := audioByGroup[groupID]; !exists || strings.EqualFold(attributes["DEFAULT"], "YES") {
+			audioByGroup[groupID] = c.resolveAgainst(uri, sourceURL)
+		}
+	}
+
 	pendingQuality := ""
+	pendingAudioGroup := ""
 	var variants []provider.Stream
 
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	for _, line := range lines {
 		if strings.HasPrefix(line, "#EXT-X-STREAM-INF:") {
-			pendingQuality = qualityFromStreamInfo(strings.TrimPrefix(line, "#EXT-X-STREAM-INF:"))
+			rawAttributes := strings.TrimPrefix(line, "#EXT-X-STREAM-INF:")
+			attributes := parseHLSAttributes(rawAttributes)
+			pendingQuality = qualityFromStreamInfo(rawAttributes)
+			pendingAudioGroup = attributes["AUDIO"]
 			continue
 		}
 		if line == "" || strings.HasPrefix(line, "#") || pendingQuality == "" {
 			continue
 		}
 		variants = append(variants, provider.Stream{
-			URL:     c.resolveAgainst(line, sourceURL),
-			Quality: pendingQuality,
-			Headers: headers.Clone(),
+			URL:      c.resolveAgainst(line, sourceURL),
+			AudioURL: audioByGroup[pendingAudioGroup],
+			Quality:  pendingQuality,
+			Headers:  headers.Clone(),
 		})
 		pendingQuality = ""
+		pendingAudioGroup = ""
 	}
 
 	return variants
+}
+
+func parseHLSAttributes(raw string) map[string]string {
+	attributes := make(map[string]string)
+	start := 0
+	inQuotes := false
+
+	addAttribute := func(part string) {
+		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok {
+			return
+		}
+		value = strings.TrimSpace(value)
+		if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
+			value = value[1 : len(value)-1]
+		}
+		attributes[strings.TrimSpace(key)] = value
+	}
+
+	for i, char := range raw {
+		switch char {
+		case '"':
+			inQuotes = !inQuotes
+		case ',':
+			if !inQuotes {
+				addAttribute(raw[start:i])
+				start = i + 1
+			}
+		}
+	}
+	addAttribute(raw[start:])
+	return attributes
 }
 
 func qualityFromStreamInfo(attributes string) string {
@@ -544,25 +605,18 @@ func (c *Client) fetchPlaylist(ctx context.Context, streamURL string) (playlist 
 	}
 	// If proxy failed and we have one configured, try direct.
 	if c.proxyURL != nil {
-		playlist, directErr := c.fetchDirect(ctx, streamURL)
+		directURL := c.directURL(streamURL)
+		playlist, directErr := c.fetchDirect(ctx, directURL)
 		if directErr == nil {
-			return playlist, streamURL, nil
+			return playlist, directURL, nil
 		}
 	}
 	return "", "", err
 }
 
-// PrepareStream downloads the selected media playlist's resources in
-// parallel, rewrites them to local files, and returns a local playlist.
-// If segment downloads fail, the media playlist is re-fetched (up to
-// maxPlaylistRefreshes times) to obtain fresh CDN URLs, and only the
-// failed segments are retried with the new URLs.
+// PrepareStream downloads the selected video and default audio resources,
+// rewrites them to local files, and returns a local HLS playlist.
 func (c *Client) PrepareStream(ctx context.Context, stream provider.Stream, progress provider.SegmentProgressFunc) (provider.Stream, error) {
-	playlist, baseURL, err := c.fetchPlaylist(ctx, stream.URL)
-	if err != nil {
-		return provider.Stream{}, fmt.Errorf("fetch media playlist: %w", err)
-	}
-
 	tmpDir, err := os.MkdirTemp("", "bettermelon-m3u8")
 	if err != nil {
 		return provider.Stream{}, fmt.Errorf("create stream cache: %w", err)
@@ -571,118 +625,174 @@ func (c *Client) PrepareStream(ctx context.Context, stream provider.Stream, prog
 		_ = os.RemoveAll(tmpDir)
 	}
 
-	rewritten, resources, err := c.localizeMediaPlaylist(playlist, baseURL, tmpDir)
+	videoDir := tmpDir
+	if stream.AudioURL != "" {
+		videoDir = filepath.Join(tmpDir, "video")
+	}
+	video, err := c.loadMediaPlaylist(ctx, stream.URL, videoDir)
+	if err != nil {
+		cleanup()
+		return provider.Stream{}, fmt.Errorf("prepare video playlist: %w", err)
+	}
+
+	var audio *mediaPlaylist
+	if stream.AudioURL != "" {
+		audio, err = c.loadMediaPlaylist(ctx, stream.AudioURL, filepath.Join(tmpDir, "audio"))
+		if err != nil {
+			cleanup()
+			return provider.Stream{}, fmt.Errorf("prepare audio playlist: %w", err)
+		}
+	}
+
+	totalResources := len(video.resources)
+	if audio != nil {
+		totalResources += len(audio.resources)
+	}
+	progressFor := func(offset int) provider.SegmentProgressFunc {
+		if progress == nil {
+			return nil
+		}
+		return func(done, _ int) {
+			progress(offset+done, totalResources)
+		}
+	}
+
+	if err := c.downloadMediaPlaylist(ctx, video, progressFor(0)); err != nil {
+		cleanup()
+		return provider.Stream{}, fmt.Errorf("download video playlist: %w", err)
+	}
+	videoPath, err := video.write()
 	if err != nil {
 		cleanup()
 		return provider.Stream{}, err
 	}
-	if len(resources) == 0 {
+
+	if audio == nil {
+		stream.URL = "file://" + videoPath
+		return stream, nil
+	}
+
+	if err := c.downloadMediaPlaylist(ctx, audio, progressFor(len(video.resources))); err != nil {
 		cleanup()
-		return provider.Stream{}, fmt.Errorf("media playlist contains no downloadable resources")
+		return provider.Stream{}, fmt.Errorf("download audio playlist: %w", err)
 	}
-
-	// Download all resources. If some fail (e.g. CDN 403), re-fetch the
-	// media playlist to get fresh CDN URLs and retry the failed segments.
-	// CDN 403 failures are permanent for a given edge server, so we write
-	// zero-filled placeholders instead of retrying. Other failures (e.g.
-	// transient network errors) may benefit from a playlist refresh.
-	var progressCompleted int
-	totalResources := len(resources)
-	for refresh := range maxPlaylistRefreshes + 1 {
-		err := c.downloadResources(ctx, resources, progress)
-		if err == nil {
-			break
-		}
-
-		// Collect which resources failed (file doesn't exist or is empty).
-		var failed []localResource
-		for _, r := range resources {
-			if info, statErr := os.Stat(r.path); statErr != nil || info.Size() == 0 {
-				failed = append(failed, r)
-			}
-		}
-		if len(failed) == 0 {
-			// All files exist despite the error — possibly a context cancellation.
-			break
-		}
-
-		// If the error is CDN 403, the playlist refresh won't help because
-		// CDN routing is deterministic per-segment. Write placeholders and
-		// proceed with partial data.
-		if isCDNForbidden(err) && len(failed) < totalResources {
-			for _, r := range failed {
-				_ = os.WriteFile(r.path, make([]byte, 1024), 0o644)
-			}
-			break
-		}
-
-		if refresh == maxPlaylistRefreshes {
-			// Final attempt: if some segments succeeded, write placeholders
-			// for the rest so we can still produce output.
-			if len(failed) < totalResources {
-				for _, r := range failed {
-					_ = os.WriteFile(r.path, make([]byte, 1024), 0o644)
-				}
-				break
-			}
-			cleanup()
-			return provider.Stream{}, err
-		}
-
-		// Re-fetch the media playlist to get fresh CDN URLs.
-		newPlaylist, newBaseURL, fetchErr := c.fetchPlaylist(ctx, stream.URL)
-		if fetchErr != nil {
-			// Can't re-fetch playlist — write placeholders for failures.
-			if len(failed) < totalResources {
-				for _, r := range failed {
-					_ = os.WriteFile(r.path, make([]byte, 1024), 0o644)
-				}
-				break
-			}
-			cleanup()
-			return provider.Stream{}, err
-		}
-
-		_, freshResources, locErr := c.localizeMediaPlaylist(newPlaylist, newBaseURL, tmpDir)
-		if locErr != nil {
-			cleanup()
-			return provider.Stream{}, err
-		}
-
-		// Map local filename → new CDN URL.
-		urlByFilename := make(map[string]string, len(freshResources))
-		for _, r := range freshResources {
-			urlByFilename[filepath.Base(r.path)] = r.url
-		}
-
-		// Update failed resources with fresh URLs.
-		for i, r := range failed {
-			if newURL, ok := urlByFilename[filepath.Base(r.path)]; ok {
-				failed[i].url = newURL
-			}
-		}
-
-		// Count already-completed downloads toward progress.
-		progressCompleted = totalResources - len(failed)
-		resources = failed
-		// Override progress callback to account for already-downloaded segments.
-		innerProgress := progress
-		off := progressCompleted
-		progress = func(done, total int) {
-			if innerProgress != nil {
-				innerProgress(off+done, totalResources)
-			}
-		}
-	}
-
-	playlistPath := filepath.Join(tmpDir, "media.m3u8")
-	if err := os.WriteFile(playlistPath, []byte(rewritten), 0o644); err != nil {
+	if _, err := audio.write(); err != nil {
 		cleanup()
-		return provider.Stream{}, fmt.Errorf("write local playlist: %w", err)
+		return provider.Stream{}, err
 	}
 
-	stream.URL = "file://" + playlistPath
+	master := `#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Default",DEFAULT=YES,AUTOSELECT=YES,URI="audio/media.m3u8"
+#EXT-X-STREAM-INF:BANDWIDTH=8000000,AUDIO="audio"
+video/media.m3u8
+`
+	masterPath := filepath.Join(tmpDir, "master.m3u8")
+	if err := os.WriteFile(masterPath, []byte(master), 0o644); err != nil {
+		cleanup()
+		return provider.Stream{}, fmt.Errorf("write local master playlist: %w", err)
+	}
+
+	stream.URL = "file://" + masterPath
 	return stream, nil
+}
+
+type mediaPlaylist struct {
+	sourceURL string
+	dir       string
+	rewritten string
+	resources []localResource
+}
+
+func (c *Client) loadMediaPlaylist(ctx context.Context, sourceURL, dir string) (*mediaPlaylist, error) {
+	playlist, baseURL, err := c.fetchPlaylist(ctx, sourceURL)
+	if err != nil {
+		return nil, fmt.Errorf("fetch media playlist: %w", err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("create media cache: %w", err)
+	}
+	rewritten, resources, err := c.localizeMediaPlaylist(playlist, baseURL, dir)
+	if err != nil {
+		return nil, err
+	}
+	if len(resources) == 0 {
+		return nil, fmt.Errorf("media playlist contains no downloadable resources")
+	}
+	return &mediaPlaylist{
+		sourceURL: sourceURL,
+		dir:       dir,
+		rewritten: rewritten,
+		resources: resources,
+	}, nil
+}
+
+func (m *mediaPlaylist) write() (string, error) {
+	playlistPath := filepath.Join(m.dir, "media.m3u8")
+	if err := os.WriteFile(playlistPath, []byte(m.rewritten), 0o644); err != nil {
+		return "", fmt.Errorf("write local playlist: %w", err)
+	}
+	return playlistPath, nil
+}
+
+func (c *Client) downloadMediaPlaylist(ctx context.Context, media *mediaPlaylist, progress provider.SegmentProgressFunc) error {
+	resources := media.resources
+	totalResources := len(resources)
+
+	for refresh := range maxPlaylistRefreshes + 1 {
+		completed := totalResources - len(resources)
+		err := c.downloadResources(ctx, resources, func(done, _ int) {
+			if progress != nil {
+				progress(completed+done, totalResources)
+			}
+		})
+		if err == nil {
+			return nil
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+
+		failed := missingResources(resources)
+		if len(failed) == 0 {
+			return err
+		}
+		if refresh == maxPlaylistRefreshes {
+			return err
+		}
+
+		newPlaylist, newBaseURL, fetchErr := c.fetchPlaylist(ctx, media.sourceURL)
+		if fetchErr != nil {
+			return fmt.Errorf("refresh media playlist: %w", fetchErr)
+		}
+		_, freshResources, locErr := c.localizeMediaPlaylist(newPlaylist, newBaseURL, media.dir)
+		if locErr != nil {
+			return locErr
+		}
+		urlByFilename := make(map[string]string, len(freshResources))
+		for _, resource := range freshResources {
+			urlByFilename[filepath.Base(resource.path)] = resource.url
+		}
+		for i, resource := range failed {
+			newURL, ok := urlByFilename[filepath.Base(resource.path)]
+			if !ok {
+				return fmt.Errorf("refreshed media playlist is missing %s", filepath.Base(resource.path))
+			}
+			failed[i].url = newURL
+		}
+		resources = failed
+	}
+	return nil
+}
+
+func missingResources(resources []localResource) []localResource {
+	var missing []localResource
+	for _, resource := range resources {
+		if info, err := os.Stat(resource.path); err != nil || info.Size() == 0 {
+			missing = append(missing, resource)
+		}
+	}
+	return missing
 }
 
 type localResource struct {
@@ -855,15 +965,13 @@ func (c *Client) downloadResource(ctx context.Context, resource localResource) e
 }
 
 func (c *Client) downloadResourceOnce(ctx context.Context, resource localResource) (bool, error) {
-	// Try proxy first, then direct if proxy returns 403.
+	// Try proxy first, then direct if the proxy is unavailable or blocked.
 	err := c.downloadFromURL(ctx, c.proxiedURL(resource.url), resource.path)
 	if err == nil {
 		return false, nil
 	}
-	// If the proxy returned 403, the CDN edge server may be blocking the
-	// proxy but accept direct requests. Try the raw CDN URL directly.
-	if isCDNForbidden(err) && c.proxyURL != nil {
-		if directErr := c.downloadFromURL(ctx, resource.url, resource.path); directErr == nil {
+	if c.proxyURL != nil && (isCDNForbidden(err) || isRetryableStatus(err)) {
+		if directErr := c.downloadFromURL(ctx, c.directURL(resource.url), resource.path); directErr == nil {
 			return false, nil
 		}
 	}
@@ -942,6 +1050,22 @@ func (c *Client) proxiedURL(rawURL string) string {
 	proxy.RawQuery = q.Encode()
 	proxy.Path = "/proxy"
 	return proxy.String()
+}
+
+// directURL unwraps a URL generated by proxiedURL back to its CDN target.
+func (c *Client) directURL(rawURL string) string {
+	if c.proxyURL == nil {
+		return rawURL
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Host != c.proxyURL.Host || parsed.Path != "/proxy" {
+		return rawURL
+	}
+	direct, err := url.Parse(parsed.Query().Get("url"))
+	if err != nil || direct.Scheme == "" || direct.Host == "" {
+		return rawURL
+	}
+	return direct.String()
 }
 
 // resolveAgainst resolves a potentially relative URL against a base URL.

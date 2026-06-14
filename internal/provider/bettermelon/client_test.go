@@ -393,6 +393,29 @@ func TestStreamsExposesMasterPlaylistQualitiesWithoutFetchingVariants(t *testing
 	}
 }
 
+func TestMasterVariantsPreserveDefaultAudioRendition(t *testing.T) {
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		t.Fatal("unexpected request")
+		return nil, nil
+	})
+	headers := make(http.Header)
+	manifest := `#EXTM3U
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="stereo",NAME="Japanese",DEFAULT=YES,LANGUAGE="jpn",URI="/proxy?url=https%3A%2F%2Fcdn.example.test%2Faudio-jpn.m3u8"
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="stereo",NAME="English",LANGUAGE="eng",URI="/proxy?url=https%3A%2F%2Fcdn.example.test%2Faudio-eng.m3u8"
+#EXT-X-STREAM-INF:BANDWIDTH=7780750,CODECS="avc1.4D4C28,mp4a.40.2",RESOLUTION=1920x1080,AUDIO="stereo"
+/proxy?url=https%3A%2F%2Fcdn.example.test%2Fvideo-1080.m3u8
+`
+
+	got := client.masterVariants(manifest, "https://api.example.test/proxy?url=master", headers)
+	if len(got) != 1 {
+		t.Fatalf("len(masterVariants()) = %d, want 1", len(got))
+	}
+	want := "https://api.example.test/proxy?url=https%3A%2F%2Fcdn.example.test%2Faudio-jpn.m3u8"
+	if got[0].AudioURL != want {
+		t.Fatalf("AudioURL = %q, want %q", got[0].AudioURL, want)
+	}
+}
+
 func TestPrepareStreamDownloadsSegmentsInParallel(t *testing.T) {
 	var inFlight atomic.Int32
 	var maxInFlight atomic.Int32
@@ -476,6 +499,76 @@ https://cdn.example.test/seg-4.jpg
 	}
 }
 
+func TestPrepareStreamMaterializesVideoAndAudio(t *testing.T) {
+	var audioPlaylistRequests atomic.Int32
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		rawURL := req.URL.Query().Get("url")
+		switch {
+		case strings.HasSuffix(rawURL, "video.m3u8"):
+			return jsonResponse(http.StatusOK, "#EXTM3U\n#EXTINF:10,\nhttps://cdn.example.test/video-seg.jpg\n#EXT-X-ENDLIST\n"), nil
+		case strings.HasSuffix(rawURL, "audio.m3u8"):
+			audioPlaylistRequests.Add(1)
+			return jsonResponse(http.StatusOK, "#EXTM3U\n#EXTINF:10,\nhttps://cdn.example.test/audio-seg.jpg\n#EXT-X-ENDLIST\n"), nil
+		case strings.HasSuffix(rawURL, "video-seg.jpg"):
+			return jsonResponse(http.StatusOK, "video-data"), nil
+		case strings.HasSuffix(rawURL, "audio-seg.jpg"):
+			return jsonResponse(http.StatusOK, "audio-data"), nil
+		default:
+			t.Fatalf("unexpected proxy URL = %s", rawURL)
+			return nil, nil
+		}
+	})
+
+	var progressDone, progressTotal int
+	prepared, err := client.PrepareStream(
+		context.Background(),
+		provider.Stream{
+			URL:      "https://cdn.example.test/video.m3u8",
+			AudioURL: "https://cdn.example.test/audio.m3u8",
+			Quality:  "1080p",
+		},
+		func(done, total int) {
+			progressDone, progressTotal = done, total
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		path := strings.TrimPrefix(prepared.URL, "file://")
+		_ = os.RemoveAll(filepath.Dir(path))
+	})
+
+	masterPath := strings.TrimPrefix(prepared.URL, "file://")
+	master, err := os.ReadFile(masterPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(master), "#EXT-X-MEDIA:TYPE=AUDIO") {
+		t.Fatalf("prepared playlist has no audio rendition:\n%s", master)
+	}
+	if !strings.Contains(string(master), "video/media.m3u8") ||
+		!strings.Contains(string(master), "audio/media.m3u8") {
+		t.Fatalf("prepared master does not reference localized tracks:\n%s", master)
+	}
+	if audioPlaylistRequests.Load() != 1 {
+		t.Fatalf("audio playlist requests = %d, want 1", audioPlaylistRequests.Load())
+	}
+	if progressDone != 2 || progressTotal != 2 {
+		t.Fatalf("final progress = %d/%d, want 2/2", progressDone, progressTotal)
+	}
+
+	root := filepath.Dir(masterPath)
+	for _, path := range []string{
+		filepath.Join(root, "video", "segment-00001.ts"),
+		filepath.Join(root, "audio", "segment-00001.ts"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("localized resource missing at %s: %v", path, err)
+		}
+	}
+}
+
 func TestPrepareStreamRetriesTransientResourceFailures(t *testing.T) {
 	segmentAttempts := 0
 	client := testClient(t, func(req *http.Request) (*http.Response, error) {
@@ -489,6 +582,8 @@ func TestPrepareStreamRetriesTransientResourceFailures(t *testing.T) {
 				return jsonResponse(http.StatusInternalServerError, "temporary"), nil
 			}
 			return jsonResponse(http.StatusOK, "mpeg-ts-data"), nil
+		case req.URL.Host == "cdn.example.test" && strings.HasSuffix(req.URL.Path, "seg-1.jpg"):
+			return jsonResponse(http.StatusInternalServerError, "temporary"), nil
 		default:
 			t.Fatalf("unexpected proxy URL = %s", rawURL)
 			return nil, nil
@@ -509,6 +604,43 @@ func TestPrepareStreamRetriesTransientResourceFailures(t *testing.T) {
 	})
 	if segmentAttempts != 5 {
 		t.Fatalf("segment attempts = %d, want retries after transient 500s", segmentAttempts)
+	}
+}
+
+func TestPrepareStreamRejectsIncompleteResources(t *testing.T) {
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		rawURL := req.URL.Query().Get("url")
+		switch {
+		case strings.HasSuffix(rawURL, "1080.m3u8"):
+			return jsonResponse(http.StatusOK, `#EXTM3U
+#EXTINF:10,
+https://cdn.example.test/good.jpg
+#EXTINF:10,
+https://cdn.example.test/missing.jpg
+#EXT-X-ENDLIST
+`), nil
+		case strings.HasSuffix(rawURL, "good.jpg"):
+			return jsonResponse(http.StatusOK, "video-data"), nil
+		case strings.HasSuffix(rawURL, "missing.jpg"), strings.HasSuffix(req.URL.Path, "missing.jpg"):
+			return jsonResponse(http.StatusForbidden, "forbidden"), nil
+		default:
+			t.Fatalf("unexpected request URL = %s", req.URL.String())
+			return nil, nil
+		}
+	})
+
+	prepared, err := client.PrepareStream(
+		context.Background(),
+		provider.Stream{URL: "https://cdn.example.test/1080.m3u8", Quality: "1080p"},
+		nil,
+	)
+	if err == nil {
+		path := strings.TrimPrefix(prepared.URL, "file://")
+		_ = os.RemoveAll(filepath.Dir(path))
+		t.Fatal("PrepareStream() succeeded with a permanently missing segment")
+	}
+	if prepared.URL != "" {
+		t.Fatalf("prepared URL = %q, want empty on failure", prepared.URL)
 	}
 }
 
@@ -904,6 +1036,79 @@ func TestDownloadResourceFallsBackToDirectOnProxy403(t *testing.T) {
 	}
 }
 
+func TestDownloadResourceUnwrapsProxyURLForDirectFallback(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "segment-00001.ts")
+
+	var proxyAttempts, directAttempts atomic.Int32
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host == "api.example.test" {
+			proxyAttempts.Add(1)
+			return jsonResponse(http.StatusForbidden, "forbidden"), nil
+		}
+		if req.URL.Host == "cdn.bettermelon.test" {
+			directAttempts.Add(1)
+			return jsonResponse(http.StatusOK, "segment-data"), nil
+		}
+		t.Fatalf("unexpected host = %s", req.URL.Host)
+		return nil, nil
+	})
+
+	proxied := client.proxiedURL("https://cdn.bettermelon.test/seg1.jpg")
+	retry, err := client.downloadResourceOnce(context.Background(), localResource{
+		url:  proxied,
+		path: path,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if retry {
+		t.Fatal("retry = true, want false (success)")
+	}
+	if proxyAttempts.Load() != 1 {
+		t.Fatalf("proxy attempts = %d, want 1", proxyAttempts.Load())
+	}
+	if directAttempts.Load() != 1 {
+		t.Fatalf("direct attempts = %d, want 1", directAttempts.Load())
+	}
+}
+
+func TestDownloadResourceFallsBackToDirectOnProxy5xx(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "segment-00001.ts")
+
+	var proxyAttempts, directAttempts atomic.Int32
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host == "api.example.test" {
+			proxyAttempts.Add(1)
+			return jsonResponse(521, "web server is down"), nil
+		}
+		if req.URL.Host == "cdn.bettermelon.test" {
+			directAttempts.Add(1)
+			return jsonResponse(http.StatusOK, "segment-data"), nil
+		}
+		t.Fatalf("unexpected host = %s", req.URL.Host)
+		return nil, nil
+	})
+
+	retry, err := client.downloadResourceOnce(context.Background(), localResource{
+		url:  "https://cdn.bettermelon.test/seg1.jpg",
+		path: path,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if retry {
+		t.Fatal("retry = true, want false (success)")
+	}
+	if proxyAttempts.Load() != 1 {
+		t.Fatalf("proxy attempts = %d, want 1", proxyAttempts.Load())
+	}
+	if directAttempts.Load() != 1 {
+		t.Fatalf("direct attempts = %d, want 1", directAttempts.Load())
+	}
+}
+
 func TestDownloadResourceNoDirectFallbackWithoutProxy(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "segment-00001.ts")
@@ -932,6 +1137,40 @@ func TestDownloadResourceNoDirectFallbackWithoutProxy(t *testing.T) {
 	// Without proxy, there's no fallback — only one attempt.
 	if attempts.Load() != 1 {
 		t.Fatalf("attempts = %d, want 1 (no fallback without proxy)", attempts.Load())
+	}
+}
+
+func TestFetchPlaylistUnwrapsProxyURLForDirectFallback(t *testing.T) {
+	var proxyAttempts, directAttempts atomic.Int32
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host == "api.example.test" {
+			proxyAttempts.Add(1)
+			return jsonResponse(521, "web server is down"), nil
+		}
+		if req.URL.Host == "cdn.bettermelon.test" {
+			directAttempts.Add(1)
+			return jsonResponse(http.StatusOK, "#EXTM3U\n#EXTINF:10,\nseg1.ts\n"), nil
+		}
+		t.Fatalf("unexpected host = %s", req.URL.Host)
+		return nil, nil
+	})
+
+	proxied := client.proxiedURL("https://cdn.bettermelon.test/playlist.m3u8")
+	playlist, baseURL, err := client.fetchPlaylist(context.Background(), proxied)
+	if err != nil {
+		t.Fatalf("fetchPlaylist() error = %v", err)
+	}
+	if !strings.Contains(playlist, "#EXTM3U") {
+		t.Fatalf("unexpected playlist = %q", playlist)
+	}
+	if baseURL != "https://cdn.bettermelon.test/playlist.m3u8" {
+		t.Fatalf("baseURL = %q, want unwrapped CDN URL", baseURL)
+	}
+	if proxyAttempts.Load() != 5 {
+		t.Fatalf("proxy attempts = %d, want 5", proxyAttempts.Load())
+	}
+	if directAttempts.Load() != 1 {
+		t.Fatalf("direct attempts = %d, want 1", directAttempts.Load())
 	}
 }
 
