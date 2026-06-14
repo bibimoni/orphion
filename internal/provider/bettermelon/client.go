@@ -32,6 +32,7 @@ const (
 )
 
 var resolutionPattern = regexp.MustCompile(`(?i)(?:^|,)RESOLUTION=\d+x(\d+)(?:,|$)`)
+var bandwidthPattern = regexp.MustCompile(`(?i)(?:^|,)BANDWIDTH=(\d+)(?:,|$)`)
 
 // urlRedactionRe matches URLs embedded in Go http error messages.
 // Typical format: Get "https://example.test/path?signed=secret": reason
@@ -523,6 +524,7 @@ func (c *Client) masterVariants(manifest, sourceURL string, headers http.Header)
 	}
 
 	pendingQuality := ""
+	pendingBandwidth := int64(0)
 	pendingAudioGroup := ""
 	var variants []provider.Stream
 
@@ -531,6 +533,7 @@ func (c *Client) masterVariants(manifest, sourceURL string, headers http.Header)
 			rawAttributes := strings.TrimPrefix(line, "#EXT-X-STREAM-INF:")
 			attributes := parseHLSAttributes(rawAttributes)
 			pendingQuality = qualityFromStreamInfo(rawAttributes)
+			pendingBandwidth = bandwidthFromStreamInfo(rawAttributes)
 			pendingAudioGroup = attributes["AUDIO"]
 			continue
 		}
@@ -538,12 +541,14 @@ func (c *Client) masterVariants(manifest, sourceURL string, headers http.Header)
 			continue
 		}
 		variants = append(variants, provider.Stream{
-			URL:      c.resolveAgainst(line, sourceURL),
-			AudioURL: audioByGroup[pendingAudioGroup],
-			Quality:  pendingQuality,
-			Headers:  headers.Clone(),
+			URL:       c.resolveAgainst(line, sourceURL),
+			AudioURL:  audioByGroup[pendingAudioGroup],
+			Quality:   pendingQuality,
+			Bandwidth: pendingBandwidth,
+			Headers:   headers.Clone(),
 		})
 		pendingQuality = ""
+		pendingBandwidth = 0
 		pendingAudioGroup = ""
 	}
 
@@ -590,9 +595,21 @@ func qualityFromStreamInfo(attributes string) string {
 	return match[1] + "p"
 }
 
+func bandwidthFromStreamInfo(attributes string) int64 {
+	match := bandwidthPattern.FindStringSubmatch(attributes)
+	if len(match) != 2 {
+		return 0
+	}
+	val, err := strconv.ParseInt(match[1], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return val
+}
+
 // maxPlaylistRefreshes is the maximum number of times the media playlist
 // is re-fetched to obtain fresh CDN URLs when segment downloads fail.
-const maxPlaylistRefreshes = 2
+const maxPlaylistRefreshes = 3
 
 // fetchPlaylist fetches a media playlist, trying the proxy first and
 // falling back to a direct request if the proxy returns persistent 5xx.
@@ -759,6 +776,13 @@ func (c *Client) downloadMediaPlaylist(ctx context.Context, media *mediaPlaylist
 		}
 		if refresh == maxPlaylistRefreshes {
 			return err
+		}
+
+		// Brief pause before refreshing to allow CDN edge servers to rotate.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
 		}
 
 		newPlaylist, newBaseURL, fetchErr := c.fetchPlaylist(ctx, media.sourceURL)
@@ -937,9 +961,19 @@ func isCDNForbidden(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "status 403")
 }
 
+// maxSegmentRetries is the maximum number of retry attempts per segment.
+const maxSegmentRetries = 6
+
+// maxCDNForbiddenRetries is the maximum number of retry attempts for a
+// segment that returns 403. We limit this to avoid long delays on
+// permanently forbidden URLs; the playlist refresh in downloadMediaPlaylist
+// handles expired signed URLs by re-fetching fresh ones.
+const maxCDNForbiddenRetries = 2
+
 func (c *Client) downloadResource(ctx context.Context, resource localResource) error {
 	var lastErr error
-	for attempt := range 6 {
+	var forbiddenAttempts int
+	for attempt := range maxSegmentRetries {
 		if attempt > 0 {
 			delay := 200 * time.Millisecond * time.Duration(1<<(attempt-1))
 			if delay > 2*time.Second {
@@ -957,6 +991,13 @@ func (c *Client) downloadResource(ctx context.Context, resource localResource) e
 			return nil
 		}
 		lastErr = err
+		if isCDNForbidden(err) {
+			forbiddenAttempts++
+			if forbiddenAttempts >= maxCDNForbiddenRetries {
+				return err
+			}
+			continue
+		}
 		if !retry {
 			return err
 		}
@@ -975,6 +1016,10 @@ func (c *Client) downloadResourceOnce(ctx context.Context, resource localResourc
 			return false, nil
 		}
 	}
+	// CDN 403 errors are retryable a limited number of times: the edge
+	// server may have rotated between attempts. However, we limit retries
+	// via maxCDNForbiddenRetries to avoid long delays on permanent 403s;
+	// the playlist refresh in downloadMediaPlaylist handles expired URLs.
 	retry := isRetryableStatus(err)
 	return retry, err
 }

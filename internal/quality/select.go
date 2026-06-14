@@ -8,8 +8,9 @@ import (
 
 // Stream represents a downloadable quality variant.
 type Stream struct {
-	URL     string
-	Quality string
+	URL       string
+	Quality   string
+	Bandwidth int64 // bits per second (0 = unknown)
 }
 
 // Reason indicates why a stream was selected.
@@ -29,26 +30,40 @@ type Result struct {
 }
 
 // Select selects the best stream matching the preferred quality.
+// When multiple streams share the same resolution, the one with the
+// highest Bandwidth value is preferred.
 func Select(preferred string, streams []Stream) Result {
 	if len(streams) == 0 {
 		return Result{}
 	}
 	target := parseQuality(preferred)
 
+	// Find exact match, preferring highest bandwidth among ties.
+	var exactBest Stream
+	foundExact := false
+	for _, s := range streams {
+		q := parseQuality(s.Quality)
+		if q == target {
+			if !foundExact || s.Bandwidth > exactBest.Bandwidth {
+				exactBest = s
+				foundExact = true
+			}
+		}
+	}
+	if foundExact {
+		return Result{Stream: exactBest, Reason: ReasonExact}
+	}
+
+	// Find best lower-quality fallback, preferring highest bandwidth among ties.
 	var (
 		best   Stream
 		bestQ  float64 = -1
 		reason Reason
 	)
-
-	// Find exact match first.
 	for _, s := range streams {
 		q := parseQuality(s.Quality)
-		if q == target {
-			return Result{Stream: s, Reason: ReasonExact}
-		}
 		if q > 0 && q < target {
-			if q > bestQ {
+			if q > bestQ || (q == bestQ && s.Bandwidth > best.Bandwidth) {
 				bestQ = q
 				best = s
 				reason = ReasonLower
@@ -60,14 +75,18 @@ func Select(preferred string, streams []Stream) Result {
 		return Result{Stream: best, Reason: reason}
 	}
 
-	// No valid lower quality. Pick lowest available.
+	// No valid lower quality. Pick lowest available, preferring highest bandwidth among ties.
 	var lowest Stream
 	lowestQ := float64(-1)
 	for _, s := range streams {
 		q := parseQuality(s.Quality)
-		if q > 0 && (lowestQ < 0 || q < lowestQ) {
-			lowestQ = q
-			lowest = s
+		if q > 0 {
+			if lowestQ < 0 || q < lowestQ {
+				lowestQ = q
+				lowest = s
+			} else if q == lowestQ && s.Bandwidth > lowest.Bandwidth {
+				lowest = s
+			}
 		}
 	}
 	if lowestQ > 0 {

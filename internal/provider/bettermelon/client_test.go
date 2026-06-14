@@ -383,6 +383,7 @@ func TestStreamsExposesMasterPlaylistQualitiesWithoutFetchingVariants(t *testing
 		t.Fatalf("len(Streams()) = %d, want 3 variants", len(got))
 	}
 	wantQualities := []string{"1080p", "720p", "360p"}
+	wantBandwidths := []int64{1588679, 918351, 460382}
 	for i, want := range wantQualities {
 		if got[i].Quality != want {
 			t.Fatalf("Streams()[%d].Quality = %q, want %q", i, got[i].Quality, want)
@@ -390,6 +391,34 @@ func TestStreamsExposesMasterPlaylistQualitiesWithoutFetchingVariants(t *testing
 		if strings.HasPrefix(got[i].URL, "file://") {
 			t.Fatalf("Streams()[%d].URL = %q, variant should be prepared only after selection", i, got[i].URL)
 		}
+		if got[i].Bandwidth != wantBandwidths[i] {
+			t.Fatalf("Streams()[%d].Bandwidth = %d, want %d", i, got[i].Bandwidth, wantBandwidths[i])
+		}
+	}
+}
+
+func TestStreamsParsesBandwidthFromManifest(t *testing.T) {
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		t.Fatal("unexpected request")
+		return nil, nil
+	})
+	headers := make(http.Header)
+	manifest := `#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=7780750,RESOLUTION=1920x1080
+/proxy?url=https://cdn.example.test/1080.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=918351,RESOLUTION=1280x720
+/proxy?url=https://cdn.example.test/720.m3u8
+`
+
+	got := client.masterVariants(manifest, "https://api.example.test/proxy?url=master", headers)
+	if len(got) != 2 {
+		t.Fatalf("len(masterVariants()) = %d, want 2", len(got))
+	}
+	if got[0].Bandwidth != 7780750 {
+		t.Fatalf("1080p Bandwidth = %d, want 7780750", got[0].Bandwidth)
+	}
+	if got[1].Bandwidth != 918351 {
+		t.Fatalf("720p Bandwidth = %d, want 918351", got[1].Bandwidth)
 	}
 }
 
@@ -413,6 +442,70 @@ func TestMasterVariantsPreserveDefaultAudioRendition(t *testing.T) {
 	want := "https://api.example.test/proxy?url=https%3A%2F%2Fcdn.example.test%2Faudio-jpn.m3u8"
 	if got[0].AudioURL != want {
 		t.Fatalf("AudioURL = %q, want %q", got[0].AudioURL, want)
+	}
+	if got[0].Bandwidth != 7780750 {
+		t.Fatalf("Bandwidth = %d, want 7780750", got[0].Bandwidth)
+	}
+}
+
+func TestBandwidthFromStreamInfo(t *testing.T) {
+	tests := []struct {
+		name       string
+		attributes string
+		want       int64
+	}{
+		{"standard", "BANDWIDTH=1588679,RESOLUTION=1920x1080", 1588679},
+		{"at_start", "BANDWIDTH=8000000,CODECS=\"avc1\"", 8000000},
+		{"at_end", "RESOLUTION=1920x1080,BANDWIDTH=4500000", 4500000},
+		{"missing", "RESOLUTION=1920x1080", 0},
+		{"empty", "", 0},
+		{"invalid", "BANDWIDTH=notanumber", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := bandwidthFromStreamInfo(tt.attributes)
+			if got != tt.want {
+				t.Errorf("bandwidthFromStreamInfo(%q) = %d, want %d", tt.attributes, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMasterVariantsParsesBandwidth(t *testing.T) {
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		t.Fatal("unexpected request")
+		return nil, nil
+	})
+	headers := make(http.Header)
+	manifest := `#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=7780750,RESOLUTION=1920x1080
+https://cdn.example.test/1080-high.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=1500000,RESOLUTION=1920x1080
+https://cdn.example.test/1080-low.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=918351,RESOLUTION=1280x720
+https://cdn.example.test/720.m3u8
+`
+
+	got := client.masterVariants(manifest, "https://cdn.example.test/master.m3u8", headers)
+	if len(got) != 3 {
+		t.Fatalf("len(masterVariants()) = %d, want 3", len(got))
+	}
+
+	// Verify bandwidth is parsed correctly for each variant.
+	if got[0].Bandwidth != 7780750 {
+		t.Errorf("variant 0 Bandwidth = %d, want 7780750", got[0].Bandwidth)
+	}
+	if got[0].Quality != "1080p" {
+		t.Errorf("variant 0 Quality = %q, want 1080p", got[0].Quality)
+	}
+	if got[1].Bandwidth != 1500000 {
+		t.Errorf("variant 1 Bandwidth = %d, want 1500000", got[1].Bandwidth)
+	}
+	if got[1].Quality != "1080p" {
+		t.Errorf("variant 1 Quality = %q, want 1080p", got[1].Quality)
+	}
+	if got[2].Bandwidth != 918351 {
+		t.Errorf("variant 2 Bandwidth = %d, want 918351", got[2].Bandwidth)
 	}
 }
 
@@ -604,6 +697,43 @@ func TestPrepareStreamRetriesTransientResourceFailures(t *testing.T) {
 	})
 	if segmentAttempts != 5 {
 		t.Fatalf("segment attempts = %d, want retries after transient 500s", segmentAttempts)
+	}
+}
+
+func TestPrepareStreamRetriesCDNForbiddenBeforeGivingUp(t *testing.T) {
+	// Verify that a 403 from the CDN is retried a limited number of times
+	// (maxCDNForbiddenRetries) before failing, rather than all 6 retries.
+	var segmentAttempts atomic.Int32
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		rawURL := req.URL.Query().Get("url")
+		switch {
+		case strings.HasSuffix(rawURL, "1080.m3u8"):
+			return jsonResponse(http.StatusOK, "#EXTM3U\n#EXTINF:10,\nhttps://cdn.example.test/seg-1.jpg\n#EXT-X-ENDLIST\n"), nil
+		case strings.HasSuffix(rawURL, "seg-1.jpg"):
+			segmentAttempts.Add(1)
+			return jsonResponse(http.StatusForbidden, "forbidden"), nil
+		case req.URL.Host == "cdn.example.test" && strings.HasSuffix(req.URL.Path, "seg-1.jpg"):
+			return jsonResponse(http.StatusForbidden, "forbidden"), nil
+		default:
+			t.Fatalf("unexpected proxy URL = %s", rawURL)
+			return nil, nil
+		}
+	})
+
+	_, err := client.PrepareStream(
+		context.Background(),
+		provider.Stream{URL: "https://cdn.example.test/1080.m3u8", Quality: "1080p"},
+		nil,
+	)
+	if err == nil {
+		t.Fatal("expected error for permanently forbidden segment")
+	}
+	// Each downloadResource attempt may try both proxy and direct (2 requests).
+	// With maxCDNForbiddenRetries=2 and maxPlaylistRefreshes=3, the total
+	// should be bounded well below the 6×2=12+ requests that full retries
+	// would generate. 8 = 2 (initial proxy+direct) × (2 CDN retries + 2 playlist refreshes).
+	if segmentAttempts.Load() > 10 {
+		t.Fatalf("segment attempts = %d, want bounded retries (not full 6-attempt backoff)", segmentAttempts.Load())
 	}
 }
 

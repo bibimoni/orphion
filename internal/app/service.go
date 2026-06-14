@@ -325,8 +325,9 @@ func (s *Service) executeJob(ctx context.Context, job download.Job) (string, err
 	qualityStreams := make([]quality.Stream, len(streams))
 	for j, st := range streams {
 		qualityStreams[j] = quality.Stream{
-			URL:     st.URL,
-			Quality: st.Quality,
+			URL:       st.URL,
+			Quality:   st.Quality,
+			Bandwidth: st.Bandwidth,
 		}
 	}
 	result := quality.Select(s.config.PreferredQty, qualityStreams)
