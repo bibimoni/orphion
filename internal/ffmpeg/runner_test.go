@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -14,7 +15,11 @@ import (
 func testFFmpegPath(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	p := filepath.Join(dir, "ffmpeg")
+	name := "ffmpeg"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	p := filepath.Join(dir, name)
 	script := "#!/bin/sh\nexit 0\n"
 	if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
