@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -335,10 +336,10 @@ func TestStreamsReturnsM3U8WithHeaders(t *testing.T) {
 }
 
 func TestStreamsExposesMasterPlaylistQualitiesWithoutFetchingVariants(t *testing.T) {
-	proxyRequests := 0
+	var proxyRequests atomic.Int32
 	client := testClient(t, func(req *http.Request) (*http.Response, error) {
-		switch req.URL.Path {
-		case "/anime/167152/1/hianime":
+		switch {
+		case strings.HasPrefix(req.URL.Path, "/anime/167152/1/"):
 			return jsonResponse(http.StatusOK, `{
 				"success": true,
 				"data": {
@@ -352,8 +353,8 @@ func TestStreamsExposesMasterPlaylistQualitiesWithoutFetchingVariants(t *testing
 					}
 				}
 			}`), nil
-		case "/proxy":
-			proxyRequests++
+		case req.URL.Path == "/proxy":
+			proxyRequests.Add(1)
 			if req.URL.Query().Get("url") != "https://cdn.example.test/master.m3u8" {
 				t.Fatalf("fetched unselected variant: %s", req.URL.Query().Get("url"))
 			}
@@ -376,13 +377,14 @@ func TestStreamsExposesMasterPlaylistQualitiesWithoutFetchingVariants(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if proxyRequests != 1 {
-		t.Fatalf("master playlist requests = %d, want 1", proxyRequests)
+	if proxyRequests.Load() != int32(len(availableProviders)) {
+		t.Fatalf("master playlist requests = %d, want %d", proxyRequests.Load(), len(availableProviders))
 	}
 	if len(got) != 3 {
 		t.Fatalf("len(Streams()) = %d, want 3 variants", len(got))
 	}
 	wantQualities := []string{"1080p", "720p", "360p"}
+	wantBandwidths := []int64{1588679, 918351, 460382}
 	for i, want := range wantQualities {
 		if got[i].Quality != want {
 			t.Fatalf("Streams()[%d].Quality = %q, want %q", i, got[i].Quality, want)
@@ -390,6 +392,34 @@ func TestStreamsExposesMasterPlaylistQualitiesWithoutFetchingVariants(t *testing
 		if strings.HasPrefix(got[i].URL, "file://") {
 			t.Fatalf("Streams()[%d].URL = %q, variant should be prepared only after selection", i, got[i].URL)
 		}
+		if got[i].Bandwidth != wantBandwidths[i] {
+			t.Fatalf("Streams()[%d].Bandwidth = %d, want %d", i, got[i].Bandwidth, wantBandwidths[i])
+		}
+	}
+}
+
+func TestStreamsParsesBandwidthFromManifest(t *testing.T) {
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		t.Fatal("unexpected request")
+		return nil, nil
+	})
+	headers := make(http.Header)
+	manifest := `#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=7780750,RESOLUTION=1920x1080
+/proxy?url=https://cdn.example.test/1080.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=918351,RESOLUTION=1280x720
+/proxy?url=https://cdn.example.test/720.m3u8
+`
+
+	got := client.masterVariants(manifest, "https://api.example.test/proxy?url=master", headers)
+	if len(got) != 2 {
+		t.Fatalf("len(masterVariants()) = %d, want 2", len(got))
+	}
+	if got[0].Bandwidth != 7780750 {
+		t.Fatalf("1080p Bandwidth = %d, want 7780750", got[0].Bandwidth)
+	}
+	if got[1].Bandwidth != 918351 {
+		t.Fatalf("720p Bandwidth = %d, want 918351", got[1].Bandwidth)
 	}
 }
 
@@ -413,6 +443,70 @@ func TestMasterVariantsPreserveDefaultAudioRendition(t *testing.T) {
 	want := "https://api.example.test/proxy?url=https%3A%2F%2Fcdn.example.test%2Faudio-jpn.m3u8"
 	if got[0].AudioURL != want {
 		t.Fatalf("AudioURL = %q, want %q", got[0].AudioURL, want)
+	}
+	if got[0].Bandwidth != 7780750 {
+		t.Fatalf("Bandwidth = %d, want 7780750", got[0].Bandwidth)
+	}
+}
+
+func TestBandwidthFromStreamInfo(t *testing.T) {
+	tests := []struct {
+		name       string
+		attributes string
+		want       int64
+	}{
+		{"standard", "BANDWIDTH=1588679,RESOLUTION=1920x1080", 1588679},
+		{"at_start", "BANDWIDTH=8000000,CODECS=\"avc1\"", 8000000},
+		{"at_end", "RESOLUTION=1920x1080,BANDWIDTH=4500000", 4500000},
+		{"missing", "RESOLUTION=1920x1080", 0},
+		{"empty", "", 0},
+		{"invalid", "BANDWIDTH=notanumber", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := bandwidthFromStreamInfo(tt.attributes)
+			if got != tt.want {
+				t.Errorf("bandwidthFromStreamInfo(%q) = %d, want %d", tt.attributes, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMasterVariantsParsesBandwidth(t *testing.T) {
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		t.Fatal("unexpected request")
+		return nil, nil
+	})
+	headers := make(http.Header)
+	manifest := `#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=7780750,RESOLUTION=1920x1080
+https://cdn.example.test/1080-high.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=1500000,RESOLUTION=1920x1080
+https://cdn.example.test/1080-low.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=918351,RESOLUTION=1280x720
+https://cdn.example.test/720.m3u8
+`
+
+	got := client.masterVariants(manifest, "https://cdn.example.test/master.m3u8", headers)
+	if len(got) != 3 {
+		t.Fatalf("len(masterVariants()) = %d, want 3", len(got))
+	}
+
+	// Verify bandwidth is parsed correctly for each variant.
+	if got[0].Bandwidth != 7780750 {
+		t.Errorf("variant 0 Bandwidth = %d, want 7780750", got[0].Bandwidth)
+	}
+	if got[0].Quality != "1080p" {
+		t.Errorf("variant 0 Quality = %q, want 1080p", got[0].Quality)
+	}
+	if got[1].Bandwidth != 1500000 {
+		t.Errorf("variant 1 Bandwidth = %d, want 1500000", got[1].Bandwidth)
+	}
+	if got[1].Quality != "1080p" {
+		t.Errorf("variant 1 Quality = %q, want 1080p", got[1].Quality)
+	}
+	if got[2].Bandwidth != 918351 {
+		t.Errorf("variant 2 Bandwidth = %d, want 918351", got[2].Bandwidth)
 	}
 }
 
@@ -607,7 +701,80 @@ func TestPrepareStreamRetriesTransientResourceFailures(t *testing.T) {
 	}
 }
 
-func TestPrepareStreamRejectsIncompleteResources(t *testing.T) {
+func TestPrepareStreamRetriesCDNForbiddenBeforeGivingUp(t *testing.T) {
+	// Verify that a 403 from the CDN is retried a limited number of times
+	// (maxCDNForbiddenRetries) before failing, rather than all 6 retries.
+	var segmentAttempts atomic.Int32
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		rawURL := req.URL.Query().Get("url")
+		switch {
+		case strings.HasSuffix(rawURL, "1080.m3u8"):
+			return jsonResponse(http.StatusOK, "#EXTM3U\n#EXTINF:10,\nhttps://cdn.example.test/seg-1.jpg\n#EXT-X-ENDLIST\n"), nil
+		case strings.HasSuffix(rawURL, "seg-1.jpg"):
+			segmentAttempts.Add(1)
+			return jsonResponse(http.StatusForbidden, "forbidden"), nil
+		case req.URL.Host == "cdn.example.test" && strings.HasSuffix(req.URL.Path, "seg-1.jpg"):
+			return jsonResponse(http.StatusForbidden, "forbidden"), nil
+		default:
+			t.Fatalf("unexpected proxy URL = %s", rawURL)
+			return nil, nil
+		}
+	})
+
+	_, err := client.PrepareStream(
+		context.Background(),
+		provider.Stream{URL: "https://cdn.example.test/1080.m3u8", Quality: "1080p"},
+		nil,
+	)
+	if err == nil {
+		t.Fatal("expected error for permanently forbidden segment")
+	}
+	// Each downloadResource attempt may try both proxy and direct (2 requests).
+	// With maxCDNForbiddenRetries=2 and maxPlaylistRefreshes=3, the total
+	// should be bounded well below the 6×2=12+ requests that full retries
+	// would generate. 8 = 2 (initial proxy+direct) × (2 CDN retries + 2 playlist refreshes).
+	if segmentAttempts.Load() > 10 {
+		t.Fatalf("segment attempts = %d, want bounded retries (not full 6-attempt backoff)", segmentAttempts.Load())
+	}
+}
+
+func TestDownloadResourcesContinuesAfterCDNForbidden(t *testing.T) {
+	tmpDir := t.TempDir()
+	var laterRequests atomic.Int32
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		rawURL := req.URL.Query().Get("url")
+		if strings.HasSuffix(rawURL, "blocked.ts") || strings.HasSuffix(req.URL.Path, "blocked.ts") {
+			return jsonResponse(http.StatusForbidden, "forbidden"), nil
+		}
+		laterRequests.Add(1)
+		return jsonResponse(http.StatusOK, "segment-data"), nil
+	})
+	client.segmentWorkers = 1
+
+	resources := []localResource{
+		{url: "https://cdn.example.test/blocked.ts", path: filepath.Join(tmpDir, "segment-00001.ts")},
+		{url: "https://cdn.example.test/later-1.ts", path: filepath.Join(tmpDir, "segment-00002.ts")},
+		{url: "https://cdn.example.test/later-2.ts", path: filepath.Join(tmpDir, "segment-00003.ts")},
+	}
+	err := client.downloadResources(context.Background(), resources, nil)
+	// The 403 is recorded as the batch error, but it does not abort the
+	// other downloads: the remaining segments are still fetched so the
+	// caller can write placeholders for the failed ones.
+	if err == nil || !strings.Contains(err.Error(), "status 403") {
+		t.Fatalf("downloadResources() error = %v, want 403", err)
+	}
+	if laterRequests.Load() != 2 {
+		t.Fatalf("later resource requests = %d, want 2 (batch continues past the forbidden segment)", laterRequests.Load())
+	}
+	// The downloadable segments were written; the blocked one was not.
+	for _, r := range resources[1:] {
+		if info, statErr := os.Stat(r.path); statErr != nil || info.Size() == 0 {
+			t.Errorf("expected segment %s to be downloaded", filepath.Base(r.path))
+		}
+	}
+}
+
+func TestPrepareStreamFillsPlaceholdersForMissingResources(t *testing.T) {
 	client := testClient(t, func(req *http.Request) (*http.Response, error) {
 		rawURL := req.URL.Query().Get("url")
 		switch {
@@ -634,13 +801,28 @@ https://cdn.example.test/missing.jpg
 		provider.Stream{URL: "https://cdn.example.test/1080.m3u8", Quality: "1080p"},
 		nil,
 	)
-	if err == nil {
+	if err != nil {
 		path := strings.TrimPrefix(prepared.URL, "file://")
 		_ = os.RemoveAll(filepath.Dir(path))
-		t.Fatal("PrepareStream() succeeded with a permanently missing segment")
+		t.Fatalf("PrepareStream() error = %v, want success with placeholder for the missing segment", err)
 	}
-	if prepared.URL != "" {
-		t.Fatalf("prepared URL = %q, want empty on failure", prepared.URL)
+	// The stream URL points at a local media playlist. The permanently
+	// missing segment (segment-00002.ts) should have been replaced by a
+	// non-empty placeholder file so the episode can still be remuxed with
+	// partial data rather than failing outright.
+	dir := filepath.Dir(strings.TrimPrefix(prepared.URL, "file://"))
+	defer func() { _ = os.RemoveAll(dir) }()
+	placeholderPath := filepath.Join(dir, "segment-00002.ts")
+	info, statErr := os.Stat(placeholderPath)
+	if statErr != nil {
+		t.Fatalf("placeholder for missing segment not written: %v", statErr)
+	}
+	if info.Size() == 0 {
+		t.Fatalf("placeholder for missing segment is empty")
+	}
+	// The successfully downloaded segment must still contain real data.
+	if data, readErr := os.ReadFile(filepath.Join(dir, "segment-00001.ts")); readErr != nil || string(data) != "video-data" {
+		t.Errorf("segment-00001.ts = %q, %v; want real downloaded data", string(data), readErr)
 	}
 }
 
@@ -686,6 +868,241 @@ func TestStreamsTriesFallbackProviders(t *testing.T) {
 	}
 	if hianimeAttempts != 3 {
 		t.Fatalf("hianime attempts = %d, want 3 (with retries)", hianimeAttempts)
+	}
+}
+
+func TestStreamsAggregatesProviders(t *testing.T) {
+	bandwidths := map[string]int{
+		"hianime":      1700000,
+		"animekai":     2500000,
+		"kickassanime": 7800000,
+		"anikoto":      1900000,
+	}
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path == "/proxy" {
+			rawURL := req.URL.Query().Get("url")
+			for providerName, bandwidth := range bandwidths {
+				if strings.Contains(rawURL, providerName+".m3u8") {
+					manifest := fmt.Sprintf(
+						"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=1920x1080\nhttps://cdn.example.test/%s-1080.m3u8\n",
+						bandwidth,
+						providerName,
+					)
+					return jsonResponse(http.StatusOK, manifest), nil
+				}
+			}
+		}
+		for providerName := range bandwidths {
+			if req.URL.Path == "/anime/154587/1/"+providerName {
+				body := fmt.Sprintf(`{
+					"success": true,
+					"data": {
+						"provider": %q,
+						"episode": {
+							"sources": {"sources": {"file": "https://cdn.example.test/%s.m3u8"}}
+						}
+					}
+				}`, providerName, providerName)
+				return jsonResponse(http.StatusOK, body), nil
+			}
+		}
+		t.Fatalf("unexpected request URL = %s", req.URL)
+		return nil, nil
+	})
+
+	episodeID := encodeEpisodeID(episodeRef{AniListID: "154587", Number: "1", Provider: "hianime"})
+	got, err := client.Streams(context.Background(), episodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("len(Streams()) = %d, want 4: %#v", len(got), got)
+	}
+	wantBandwidths := []int64{1700000, 2500000, 7800000, 1900000}
+	for i, want := range wantBandwidths {
+		if got[i].Bandwidth != want {
+			t.Fatalf("Streams()[%d].Bandwidth = %d, want %d", i, got[i].Bandwidth, want)
+		}
+	}
+}
+
+func TestStreamsDeduplicatesProviders(t *testing.T) {
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path == "/proxy" {
+			rawURL := req.URL.Query().Get("url")
+			var streamURL string
+			if strings.Contains(rawURL, "kickassanime.m3u8") {
+				streamURL = "https://cdn.example.test/high-1080.m3u8"
+			} else {
+				streamURL = "https://cdn.example.test/shared-1080.m3u8"
+			}
+			manifest := fmt.Sprintf(
+				"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1800000,RESOLUTION=1920x1080\n%s\n",
+				streamURL,
+			)
+			return jsonResponse(http.StatusOK, manifest), nil
+		}
+		for _, providerName := range availableProviders {
+			if req.URL.Path == "/anime/154587/1/"+providerName {
+				body := fmt.Sprintf(`{
+					"success": true,
+					"data": {
+						"provider": %q,
+						"episode": {
+							"sources": {"sources": {"file": "https://cdn.example.test/%s.m3u8"}}
+						}
+					}
+				}`, providerName, providerName)
+				return jsonResponse(http.StatusOK, body), nil
+			}
+		}
+		t.Fatalf("unexpected request URL = %s", req.URL)
+		return nil, nil
+	})
+
+	episodeID := encodeEpisodeID(episodeRef{AniListID: "154587", Number: "1", Provider: "hianime"})
+	got, err := client.Streams(context.Background(), episodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len(Streams()) = %d, want 2 unique streams: %#v", len(got), got)
+	}
+	if !strings.Contains(got[0].URL, "shared-1080.m3u8") ||
+		!strings.Contains(got[1].URL, "high-1080.m3u8") {
+		t.Fatalf("Streams() order = %#v, want shared then high", got)
+	}
+}
+
+func TestStreamsQueriesProvidersConcurrently(t *testing.T) {
+	var started atomic.Int32
+	allStarted := make(chan struct{})
+	release := make(chan struct{})
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		if strings.HasPrefix(req.URL.Path, "/anime/154587/1/") {
+			if started.Add(1) == int32(len(availableProviders)) {
+				close(allStarted)
+			}
+			select {
+			case <-release:
+			case <-req.Context().Done():
+				return nil, req.Context().Err()
+			}
+			return jsonResponse(http.StatusForbidden, "unavailable"), nil
+		}
+		return jsonResponse(http.StatusNotFound, "not found"), nil
+	})
+
+	episodeID := encodeEpisodeID(episodeRef{AniListID: "154587", Number: "1", Provider: "hianime"})
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.Streams(context.Background(), episodeID)
+		done <- err
+	}()
+
+	select {
+	case <-allStarted:
+		close(release)
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatalf("only %d/%d provider requests started concurrently", started.Load(), len(availableProviders))
+	}
+	if err := <-done; err == nil {
+		t.Fatal("Streams() error = nil when all providers fail")
+	}
+}
+
+func TestStreamsResolvesMasterPlaylistsSequentially(t *testing.T) {
+	var inFlight atomic.Int32
+	var maxInFlight atomic.Int32
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		switch {
+		case strings.HasPrefix(req.URL.Path, "/anime/154587/1/"):
+			providerName := filepath.Base(req.URL.Path)
+			body := fmt.Sprintf(`{
+				"success": true,
+				"data": {
+					"provider": %q,
+					"episode": {
+						"sources": {"sources": {"file": "https://cdn.example.test/%s.m3u8"}}
+					}
+				}
+			}`, providerName, providerName)
+			return jsonResponse(http.StatusOK, body), nil
+		case req.URL.Path == "/proxy":
+			current := inFlight.Add(1)
+			defer inFlight.Add(-1)
+			for {
+				seen := maxInFlight.Load()
+				if current <= seen || maxInFlight.CompareAndSwap(seen, current) {
+					break
+				}
+			}
+			time.Sleep(20 * time.Millisecond)
+			rawURL := req.URL.Query().Get("url")
+			providerName := strings.TrimSuffix(filepath.Base(rawURL), ".m3u8")
+			manifest := fmt.Sprintf(
+				"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1800000,RESOLUTION=1920x1080\nhttps://cdn.example.test/%s-1080.m3u8\n",
+				providerName,
+			)
+			return jsonResponse(http.StatusOK, manifest), nil
+		default:
+			t.Fatalf("unexpected request URL = %s", req.URL)
+			return nil, nil
+		}
+	})
+
+	episodeID := encodeEpisodeID(episodeRef{AniListID: "154587", Number: "1", Provider: "hianime"})
+	got, err := client.Streams(context.Background(), episodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(availableProviders) {
+		t.Fatalf("len(Streams()) = %d, want %d", len(got), len(availableProviders))
+	}
+	if maxInFlight.Load() != 1 {
+		t.Fatalf("concurrent master playlist requests = %d, want 1", maxInFlight.Load())
+	}
+}
+
+func TestStreamsReturnsSuccessfulProvidersWhenAnotherFails(t *testing.T) {
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.URL.Path == "/anime/154587/1/hianime":
+			return jsonResponse(http.StatusForbidden, "unavailable"), nil
+		case strings.HasPrefix(req.URL.Path, "/anime/154587/1/"):
+			providerName := filepath.Base(req.URL.Path)
+			body := fmt.Sprintf(`{
+				"success": true,
+				"data": {
+					"provider": %q,
+					"episode": {
+						"sources": {"sources": {"file": "https://cdn.example.test/%s.m3u8"}}
+					}
+				}
+			}`, providerName, providerName)
+			return jsonResponse(http.StatusOK, body), nil
+		case req.URL.Path == "/proxy":
+			masterURL := req.URL.Query().Get("url")
+			providerName := strings.TrimSuffix(filepath.Base(masterURL), ".m3u8")
+			manifest := fmt.Sprintf(
+				"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1800000,RESOLUTION=1920x1080\nhttps://cdn.example.test/%s-1080.m3u8\n",
+				providerName,
+			)
+			return jsonResponse(http.StatusOK, manifest), nil
+		default:
+			t.Fatalf("unexpected request URL = %s", req.URL)
+			return nil, nil
+		}
+	})
+
+	episodeID := encodeEpisodeID(episodeRef{AniListID: "154587", Number: "1", Provider: "hianime"})
+	got, err := client.Streams(context.Background(), episodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("len(Streams()) = %d, want 3 successful providers", len(got))
 	}
 }
 
@@ -853,8 +1270,8 @@ func TestSearchWithNoEnglishTitleFallsBackToAniListLabel(t *testing.T) {
 
 func TestStreamsCDNURLIsProxied(t *testing.T) {
 	client := testClient(t, func(req *http.Request) (*http.Response, error) {
-		switch req.URL.Path {
-		case "/anime/1/1/hianime":
+		switch {
+		case strings.HasPrefix(req.URL.Path, "/anime/1/1/"):
 			return jsonResponse(http.StatusOK, `{
 				"success": true,
 				"data": {
@@ -868,7 +1285,7 @@ func TestStreamsCDNURLIsProxied(t *testing.T) {
 					}
 				}
 			}`), nil
-		case "/proxy":
+		case req.URL.Path == "/proxy":
 			urlParam := req.URL.Query().Get("url")
 			if strings.Contains(urlParam, "index-") {
 				return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nseg1.ts\n#EXT-X-ENDLIST"), nil
@@ -895,8 +1312,8 @@ func TestStreamsCDNURLIsProxied(t *testing.T) {
 
 func TestStreamsAlreadyProxiedURLIsNotDoubleProxied(t *testing.T) {
 	client := testClient(t, func(req *http.Request) (*http.Response, error) {
-		switch req.URL.Path {
-		case "/anime/1/1/hianime":
+		switch {
+		case strings.HasPrefix(req.URL.Path, "/anime/1/1/"):
 			return jsonResponse(http.StatusOK, `{
 				"success": true,
 				"data": {
@@ -910,7 +1327,7 @@ func TestStreamsAlreadyProxiedURLIsNotDoubleProxied(t *testing.T) {
 					}
 				}
 			}`), nil
-		case "/proxy":
+		case req.URL.Path == "/proxy":
 			urlParam := req.URL.Query().Get("url")
 			if strings.Contains(urlParam, "index-") {
 				return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nseg1.ts\n#EXT-X-ENDLIST"), nil
@@ -1205,7 +1622,7 @@ func TestFetchPlaylistFallsBackToDirectOnProxy5xx(t *testing.T) {
 	}
 }
 
-func TestFetchPlaylistReturnsProxiedBaseURLOnProxySuccess(t *testing.T) {
+func TestFetchPlaylistReturnsDirectBaseURLOnProxySuccess(t *testing.T) {
 	client := testClient(t, func(req *http.Request) (*http.Response, error) {
 		return jsonResponse(http.StatusOK, "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nseg1.ts\n#EXT-X-ENDLIST"), nil
 	})
@@ -1217,8 +1634,63 @@ func TestFetchPlaylistReturnsProxiedBaseURLOnProxySuccess(t *testing.T) {
 	if !strings.Contains(playlist, "#EXTM3U") {
 		t.Fatalf("unexpected playlist = %q", playlist)
 	}
-	// When proxy succeeds, base URL should be proxied.
-	if !strings.Contains(baseURL, "proxy") {
-		t.Fatalf("baseURL = %q, want proxied URL", baseURL)
+	if baseURL != "https://cdn.bettermelon.test/playlist.m3u8" {
+		t.Fatalf("baseURL = %q, want direct CDN URL", baseURL)
 	}
+}
+
+func TestPrepareStreamResolvesRelativeSegmentsAgainstCDNPlaylist(t *testing.T) {
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		rawURL := req.URL.Query().Get("url")
+		switch rawURL {
+		case "https://cdn.bettermelon.test/anime/episode/1080.m3u8":
+			return jsonResponse(http.StatusOK, "#EXTM3U\n#EXTINF:10,\nsegment-00003.ts\n#EXT-X-ENDLIST\n"), nil
+		case "https://cdn.bettermelon.test/anime/episode/segment-00003.ts":
+			return jsonResponse(http.StatusOK, "segment-data"), nil
+		default:
+			return jsonResponse(http.StatusNotFound, "not found"), nil
+		}
+	})
+
+	prepared, err := client.PrepareStream(
+		context.Background(),
+		provider.Stream{URL: "https://cdn.bettermelon.test/anime/episode/1080.m3u8", Quality: "1080p"},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("PrepareStream() error = %v", err)
+	}
+	t.Cleanup(func() {
+		path := strings.TrimPrefix(prepared.URL, "file://")
+		_ = os.RemoveAll(filepath.Dir(path))
+	})
+}
+
+func TestPrepareStreamResolvesProxyRelativeSegmentsAgainstProxyHost(t *testing.T) {
+	const segmentURL = "https://cdn.bettermelon.test/anime/episode/segment-00003.ts"
+	client := testClient(t, func(req *http.Request) (*http.Response, error) {
+		rawURL := req.URL.Query().Get("url")
+		switch {
+		case rawURL == "https://cdn.bettermelon.test/anime/episode/1080.m3u8":
+			segmentRef := "/proxy?url=" + url.QueryEscape(segmentURL)
+			return jsonResponse(http.StatusOK, "#EXTM3U\n#EXTINF:10,\n"+segmentRef+"\n#EXT-X-ENDLIST\n"), nil
+		case req.URL.Host == "api.example.test" && rawURL == segmentURL:
+			return jsonResponse(http.StatusOK, "segment-data"), nil
+		default:
+			return jsonResponse(http.StatusNotFound, "not found"), nil
+		}
+	})
+
+	prepared, err := client.PrepareStream(
+		context.Background(),
+		provider.Stream{URL: "https://cdn.bettermelon.test/anime/episode/1080.m3u8", Quality: "1080p"},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("PrepareStream() error = %v", err)
+	}
+	t.Cleanup(func() {
+		path := strings.TrimPrefix(prepared.URL, "file://")
+		_ = os.RemoveAll(filepath.Dir(path))
+	})
 }

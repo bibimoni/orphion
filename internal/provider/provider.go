@@ -23,10 +23,11 @@ type Episode struct {
 
 // Stream represents a downloadable quality variant.
 type Stream struct {
-	URL      string
-	AudioURL string
-	Quality  string
-	Headers  http.Header
+	URL       string
+	AudioURL  string
+	Quality   string
+	Bandwidth int64 // bits per second from HLS BANDWIDTH attribute (0 = unknown)
+	Headers   http.Header
 }
 
 // Provider defines the content-catalog contract.

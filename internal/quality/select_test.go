@@ -55,6 +55,45 @@ func TestSelect(t *testing.T) {
 			},
 			"u1080", ReasonExact,
 		},
+		{
+			"same_resolution_higher_bandwidth",
+			"1080p",
+			[]Stream{
+				{URL: "u1080-low", Quality: "1080p", Bandwidth: 1500000},
+				{URL: "u1080-high", Quality: "1080p", Bandwidth: 7800000},
+				{URL: "u720", Quality: "720p"},
+			},
+			"u1080-high", ReasonExact,
+		},
+		{
+			"same_resolution_zero_bandwidth",
+			"1080p",
+			[]Stream{
+				{URL: "u1080-a", Quality: "1080p", Bandwidth: 0},
+				{URL: "u1080-b", Quality: "1080p", Bandwidth: 5000000},
+			},
+			"u1080-b", ReasonExact,
+		},
+		{
+			"multiple_resolutions_pick_best_bandwidth",
+			"1080p",
+			[]Stream{
+				{URL: "u720-low", Quality: "720p", Bandwidth: 500000},
+				{URL: "u720-high", Quality: "720p", Bandwidth: 2000000},
+				{URL: "u480", Quality: "480p"},
+			},
+			"u720-high", ReasonLower,
+		},
+		{
+			"lowest_fallback_prefers_higher_bandwidth",
+			"1080p",
+			[]Stream{
+				{URL: "u1440-low", Quality: "1440p", Bandwidth: 4000000},
+				{URL: "u1440-high", Quality: "1440p", Bandwidth: 8000000},
+				{URL: "u2160", Quality: "2160p"},
+			},
+			"u1440-high", ReasonLowest,
+		},
 	}
 
 	for _, tt := range tests {

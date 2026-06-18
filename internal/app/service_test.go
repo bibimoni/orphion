@@ -5,8 +5,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/bibimoni/orphion/internal/download"
 	"github.com/bibimoni/orphion/internal/ffmpeg"
 	"github.com/bibimoni/orphion/internal/paths"
 	"github.com/bibimoni/orphion/internal/provider"
@@ -19,6 +22,24 @@ type fakeProvider struct {
 	streams  []provider.Stream
 	err      error
 	queries  []string
+}
+
+type fallbackPreparer struct {
+	*fakeProvider
+	failures map[string]error
+	attempts []string
+}
+
+func (p *fallbackPreparer) PrepareStream(
+	ctx context.Context,
+	stream provider.Stream,
+	progress provider.SegmentProgressFunc,
+) (provider.Stream, error) {
+	p.attempts = append(p.attempts, stream.URL)
+	if err := p.failures[stream.URL]; err != nil {
+		return provider.Stream{}, err
+	}
+	return stream, nil
 }
 
 func (p *fakeProvider) Search(ctx context.Context, query, kind string) ([]provider.Anime, error) {
@@ -135,14 +156,50 @@ func TestService_ResolveID(t *testing.T) {
 		t.Errorf("ID = %q, want %q", id, "ep1")
 	}
 
-	// Multiple results should error.
+	// Multiple results with an exact title match resolve to that match.
+	fp.searches = []provider.Anime{
+		{ID: "a", Title: "Sentenced to Be a Hero"},
+		{ID: "b", Title: "Sentenced to Be a Hero Season 2"},
+	}
+	id, err = svc.ResolveID(context.Background(), "Sentenced to Be a Hero", "anime")
+	if err != nil {
+		t.Fatalf("expected exact match, got error: %v", err)
+	}
+	if id != "a" {
+		t.Errorf("ID = %q, want %q for exact match", id, "a")
+	}
+
+	// Exact match is case- and punctuation-insensitive.
+	fp.searches = []provider.Anime{
+		{ID: "a", Title: "Sentenced: to Be a Hero!"},
+		{ID: "b", Title: "Sentenced to Be a Hero Season 2"},
+	}
+	id, err = svc.ResolveID(context.Background(), "sentenced to be a hero", "anime")
+	if err != nil {
+		t.Fatalf("expected normalized match, got error: %v", err)
+	}
+	if id != "a" {
+		t.Errorf("ID = %q, want %q for normalized match", id, "a")
+	}
+
+	// Multiple results with no exact match should error.
 	fp.searches = []provider.Anime{
 		{ID: "a", Title: "A"},
 		{ID: "b", Title: "B"},
 	}
 	_, err = svc.ResolveID(context.Background(), "test", "anime")
 	if err == nil {
-		t.Fatal("expected error for multiple results")
+		t.Fatal("expected error for multiple results with no exact match")
+	}
+
+	// Multiple results with more than one exact match are ambiguous.
+	fp.searches = []provider.Anime{
+		{ID: "a", Title: "A"},
+		{ID: "b", Title: "A"},
+	}
+	_, err = svc.ResolveID(context.Background(), "A", "anime")
+	if err == nil {
+		t.Fatal("expected error for duplicate exact matches")
 	}
 
 	// Zero results should error.
@@ -174,6 +231,41 @@ func TestService_DownloadEpisodes(t *testing.T) {
 		t.Errorf("expected 2 results, got %d", len(raw))
 	}
 	_ = result
+}
+
+func TestServiceFallsBackWhenPreferredStreamPreparationFails(t *testing.T) {
+	p := &fallbackPreparer{
+		fakeProvider: &fakeProvider{
+			streams: []provider.Stream{
+				{URL: "https://example.com/high.m3u8", Quality: "1080p", Bandwidth: 7800000},
+				{URL: "https://example.com/fallback.m3u8", Quality: "1080p", Bandwidth: 1700000},
+			},
+		},
+		failures: map[string]error{
+			"https://example.com/high.m3u8": errors.New("segment status 403"),
+		},
+	}
+	svc := New(p, nil, Config{
+		OutputDir:    t.TempDir(),
+		Concurrency:  1,
+		PreferredQty: "1080p",
+	})
+
+	_, err := svc.executeJob(context.Background(), download.Job{
+		ID:      "episode-1",
+		Episode: "1",
+		Title:   "Test",
+	})
+	if err == nil || !strings.Contains(err.Error(), "runner not available") {
+		t.Fatalf("executeJob() error = %v, want runner unavailable after fallback preparation", err)
+	}
+	wantAttempts := []string{
+		"https://example.com/high.m3u8",
+		"https://example.com/fallback.m3u8",
+	}
+	if !reflect.DeepEqual(p.attempts, wantAttempts) {
+		t.Fatalf("preparation attempts = %v, want %v", p.attempts, wantAttempts)
+	}
 }
 
 func TestService_DownloadSelectedEpisodesUsesProvidedEpisodeIDs(t *testing.T) {

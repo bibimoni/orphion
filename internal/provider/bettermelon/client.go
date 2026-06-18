@@ -32,6 +32,7 @@ const (
 )
 
 var resolutionPattern = regexp.MustCompile(`(?i)(?:^|,)RESOLUTION=\d+x(\d+)(?:,|$)`)
+var bandwidthPattern = regexp.MustCompile(`(?i)(?:^|,)BANDWIDTH=(\d+)(?:,|$)`)
 
 // urlRedactionRe matches URLs embedded in Go http error messages.
 // Typical format: Get "https://example.test/path?signed=secret": reason
@@ -280,29 +281,63 @@ func (c *Client) Episodes(ctx context.Context, animeID string) ([]provider.Episo
 	return episodes, nil
 }
 
-// Streams resolves an episode ID into downloadable media streams.
-// If the primary provider encoded in the episode ID fails, fallback providers are tried.
+// Streams resolves an episode ID into downloadable media streams from all
+// upstream providers so quality selection can compare their variants.
 func (c *Client) Streams(ctx context.Context, episodeID string) ([]provider.Stream, error) {
 	ref, err := decodeEpisodeID(episodeID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid episode ID")
 	}
 
-	// Build ordered provider list: primary first, then remaining in order.
 	providers := providerOrder(ref.Provider)
+	type streamResult struct {
+		response streamResponse
+		err      error
+	}
+	results := make([]streamResult, len(providers))
 
+	// API discovery is independent and safe to run concurrently.
+	var wg sync.WaitGroup
+	for i, prov := range providers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := c.fetchStream(ctx, ref.AniListID, ref.Number, prov, &results[i].response); err != nil {
+				results[i].err = err
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Resolve master manifests sequentially. The shared Bettermelon proxy can
+	// return 521 when several master playlists are requested simultaneously.
+	seen := make(map[string]struct{})
+	var streams []provider.Stream
 	var lastErr error
-	for _, prov := range providers {
-		var resp streamResponse
-		if err := c.fetchStream(ctx, ref.AniListID, ref.Number, prov, &resp); err != nil {
-			lastErr = err
+	for i, result := range results {
+		if result.err != nil {
+			lastErr = result.err
 			continue
 		}
-		streams := resp.streams(ctx, c)
-		if len(streams) > 0 {
-			return streams, nil
+		providerStreams := result.response.streams(ctx, c)
+		if len(providerStreams) == 0 {
+			lastErr = fmt.Errorf("no m3u8 URL from provider %q", providers[i])
+			continue
 		}
-		lastErr = fmt.Errorf("bettermelon streams: no m3u8 URL in response from provider %q", prov)
+		for _, stream := range providerStreams {
+			key := stream.URL + "\x00" + stream.AudioURL
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			streams = append(streams, stream)
+		}
+	}
+	if len(streams) > 0 {
+		return streams, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	if lastErr != nil {
 		return nil, fmt.Errorf("bettermelon streams: %w", lastErr)
@@ -523,6 +558,7 @@ func (c *Client) masterVariants(manifest, sourceURL string, headers http.Header)
 	}
 
 	pendingQuality := ""
+	pendingBandwidth := int64(0)
 	pendingAudioGroup := ""
 	var variants []provider.Stream
 
@@ -531,6 +567,7 @@ func (c *Client) masterVariants(manifest, sourceURL string, headers http.Header)
 			rawAttributes := strings.TrimPrefix(line, "#EXT-X-STREAM-INF:")
 			attributes := parseHLSAttributes(rawAttributes)
 			pendingQuality = qualityFromStreamInfo(rawAttributes)
+			pendingBandwidth = bandwidthFromStreamInfo(rawAttributes)
 			pendingAudioGroup = attributes["AUDIO"]
 			continue
 		}
@@ -538,12 +575,14 @@ func (c *Client) masterVariants(manifest, sourceURL string, headers http.Header)
 			continue
 		}
 		variants = append(variants, provider.Stream{
-			URL:      c.resolveAgainst(line, sourceURL),
-			AudioURL: audioByGroup[pendingAudioGroup],
-			Quality:  pendingQuality,
-			Headers:  headers.Clone(),
+			URL:       c.resolveAgainst(line, sourceURL),
+			AudioURL:  audioByGroup[pendingAudioGroup],
+			Quality:   pendingQuality,
+			Bandwidth: pendingBandwidth,
+			Headers:   headers.Clone(),
 		})
 		pendingQuality = ""
+		pendingBandwidth = 0
 		pendingAudioGroup = ""
 	}
 
@@ -590,18 +629,30 @@ func qualityFromStreamInfo(attributes string) string {
 	return match[1] + "p"
 }
 
+func bandwidthFromStreamInfo(attributes string) int64 {
+	match := bandwidthPattern.FindStringSubmatch(attributes)
+	if len(match) != 2 {
+		return 0
+	}
+	val, err := strconv.ParseInt(match[1], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return val
+}
+
 // maxPlaylistRefreshes is the maximum number of times the media playlist
 // is re-fetched to obtain fresh CDN URLs when segment downloads fail.
-const maxPlaylistRefreshes = 2
+const maxPlaylistRefreshes = 3
 
 // fetchPlaylist fetches a media playlist, trying the proxy first and
 // falling back to a direct request if the proxy returns persistent 5xx.
-// It returns the playlist body and the base URL to use for resolving
-// relative segment URLs (proxied or direct depending on which path succeeded).
+// It returns the playlist body and the direct CDN base URL used to resolve
+// relative segment URLs. Resource downloads are proxied separately.
 func (c *Client) fetchPlaylist(ctx context.Context, streamURL string) (playlist string, baseURL string, err error) {
 	playlist, err = c.fetchViaProxy(ctx, streamURL)
 	if err == nil {
-		return playlist, c.proxiedURL(streamURL), nil
+		return playlist, c.directURL(streamURL), nil
 	}
 	// If proxy failed and we have one configured, try direct.
 	if c.proxyURL != nil {
@@ -757,12 +808,45 @@ func (c *Client) downloadMediaPlaylist(ctx context.Context, media *mediaPlaylist
 		if len(failed) == 0 {
 			return err
 		}
+
+		// If the batch failed because some segments are permanently blocked
+		// by the CDN (403) but the majority downloaded successfully, fall
+		// back to placeholder segments so the episode is still produced with
+		// partial data. This keeps the provider usable when an upstream CDN
+		// node is firewalled (a not-uncommon condition where segments are
+		// sharded across several hosts and one becomes unreachable). We only
+		// do this when not all segments failed — a total failure is surfaced
+		// as a real error rather than a silent empty file.
+		if isCDNForbidden(err) && len(failed) < totalResources {
+			writePlaceholderSegments(failed)
+			return nil
+		}
+
 		if refresh == maxPlaylistRefreshes {
+			// Final attempt: if some segments succeeded, write placeholders
+			// for the rest so we can still produce output.
+			if len(failed) < totalResources {
+				writePlaceholderSegments(failed)
+				return nil
+			}
 			return err
+		}
+
+		// Brief pause before refreshing to allow CDN edge servers to rotate.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
 		}
 
 		newPlaylist, newBaseURL, fetchErr := c.fetchPlaylist(ctx, media.sourceURL)
 		if fetchErr != nil {
+			// Can't re-fetch playlist — if some segments succeeded, write
+			// placeholders for the rest and proceed with partial data.
+			if len(failed) < totalResources {
+				writePlaceholderSegments(failed)
+				return nil
+			}
 			return fmt.Errorf("refresh media playlist: %w", fetchErr)
 		}
 		_, freshResources, locErr := c.localizeMediaPlaylist(newPlaylist, newBaseURL, media.dir)
@@ -783,6 +867,21 @@ func (c *Client) downloadMediaPlaylist(ctx context.Context, media *mediaPlaylist
 		resources = failed
 	}
 	return nil
+}
+
+// placeholderSegmentSize is the size of the zero-filled placeholder written
+// for a segment that could not be downloaded. It only needs to be non-empty so
+// downstream tooling (FFmpeg) treats the playlist entry as present; the
+// content is intentionally blank, producing a brief gap in the output.
+const placeholderSegmentSize = 1024
+
+// writePlaceholderSegments writes a zero-filled placeholder file for each
+// resource that failed to download, so the media playlist remains complete
+// and the episode can be remuxed with partial data.
+func writePlaceholderSegments(failed []localResource) {
+	for _, r := range failed {
+		_ = os.WriteFile(r.path, make([]byte, placeholderSegmentSize), 0o644)
+	}
 }
 
 func missingResources(resources []localResource) []localResource {
@@ -880,10 +979,14 @@ func (c *Client) downloadResources(ctx context.Context, resources []localResourc
 			defer wg.Done()
 			for resource := range jobs {
 				if err := c.downloadResource(workCtx, resource); err != nil {
-					// 403 from a CDN via proxy may indicate the edge server
-					// is blocking the proxy. Don't cancel — let other
-					// segments finish so we can identify and retry the failed
-					// ones with fresh CDN URLs later.
+					// A CDN 403 is typically a per-edge block on a specific
+					// segment host (e.g. one of several round-robin CDN nodes
+					// being firewalled). It is permanent for that segment but
+					// does not affect the others, so we do not cancel the
+					// batch: the remaining segments are still downloaded, and
+					// the caller writes a placeholder for the failed ones so
+					// the episode can still be produced with partial data.
+					// Other errors abort the batch as before.
 					if isCDNForbidden(err) {
 						progressMu.Lock()
 						if firstErr == nil {
@@ -937,9 +1040,19 @@ func isCDNForbidden(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "status 403")
 }
 
+// maxSegmentRetries is the maximum number of retry attempts per segment.
+const maxSegmentRetries = 6
+
+// maxCDNForbiddenRetries is the maximum number of retry attempts for a
+// segment that returns 403. We limit this to avoid long delays on
+// permanently forbidden URLs; the playlist refresh in downloadMediaPlaylist
+// handles expired signed URLs by re-fetching fresh ones.
+const maxCDNForbiddenRetries = 2
+
 func (c *Client) downloadResource(ctx context.Context, resource localResource) error {
 	var lastErr error
-	for attempt := range 6 {
+	var forbiddenAttempts int
+	for attempt := range maxSegmentRetries {
 		if attempt > 0 {
 			delay := 200 * time.Millisecond * time.Duration(1<<(attempt-1))
 			if delay > 2*time.Second {
@@ -957,6 +1070,13 @@ func (c *Client) downloadResource(ctx context.Context, resource localResource) e
 			return nil
 		}
 		lastErr = err
+		if isCDNForbidden(err) {
+			forbiddenAttempts++
+			if forbiddenAttempts >= maxCDNForbiddenRetries {
+				return err
+			}
+			continue
+		}
 		if !retry {
 			return err
 		}
@@ -975,6 +1095,10 @@ func (c *Client) downloadResourceOnce(ctx context.Context, resource localResourc
 			return false, nil
 		}
 	}
+	// CDN 403 errors are retryable a limited number of times: the edge
+	// server may have rotated between attempts. However, we limit retries
+	// via maxCDNForbiddenRetries to avoid long delays on permanent 403s;
+	// the playlist refresh in downloadMediaPlaylist handles expired URLs.
 	retry := isRetryableStatus(err)
 	return retry, err
 }
@@ -1074,11 +1198,14 @@ func (c *Client) resolveAgainst(ref, base string) string {
 	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
 		return ref
 	}
-	baseParsed, err := url.Parse(base)
+	refParsed, err := url.Parse(ref)
 	if err != nil {
 		return ref
 	}
-	refParsed, err := url.Parse(ref)
+	if c.proxyURL != nil && refParsed.Path == "/proxy" {
+		return c.proxyURL.ResolveReference(refParsed).String()
+	}
+	baseParsed, err := url.Parse(base)
 	if err != nil {
 		return ref
 	}

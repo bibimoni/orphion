@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -281,4 +282,172 @@ func protectedResponse(t *testing.T, plaintext []byte) []byte {
 		t.Fatal(err)
 	}
 	return body
+}
+
+func TestQualityFromHLSStreamInf(t *testing.T) {
+	tests := []struct {
+		line string
+		want string
+	}{
+		{`#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=1920x1080,CODECS="avc1"`, "1080p"},
+		{`#EXT-X-STREAM-INF:BANDWIDTH=4000000,RESOLUTION=1280x720`, "720p"},
+		{`#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=854x480`, "480p"},
+		{`#EXT-X-STREAM-INF:BANDWIDTH=500000`, ""},
+	}
+	for _, tc := range tests {
+		got := qualityFromHLSStreamInf(tc.line)
+		if got != tc.want {
+			t.Errorf("qualityFromHLSStreamInf(%q) = %q, want %q", tc.line, got, tc.want)
+		}
+	}
+}
+
+func TestBandwidthFromHLSStreamInf(t *testing.T) {
+	tests := []struct {
+		line string
+		want int64
+	}{
+		{`#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=1920x1080`, 8000000},
+		{`#EXT-X-STREAM-INF:BANDWIDTH=1234567,CODECS="avc1"`, 1234567},
+		{`#EXT-X-STREAM-INF:RESOLUTION=1920x1080`, 0},
+	}
+	for _, tc := range tests {
+		got := bandwidthFromHLSStreamInf(tc.line)
+		if got != tc.want {
+			t.Errorf("bandwidthFromHLSStreamInf(%q) = %d, want %d", tc.line, got, tc.want)
+		}
+	}
+}
+
+func TestParseHLSAttributes(t *testing.T) {
+	tests := []struct {
+		input string
+		want  map[string]string
+	}{
+		{
+			`BANDWIDTH=8000000,RESOLUTION=1920x1080,CODECS="avc1.640028"`,
+			map[string]string{"BANDWIDTH": "8000000", "RESOLUTION": "1920x1080", "CODECS": "avc1.640028"},
+		},
+		{
+			`AUDIO="audio",SUBTITLES="subs"`,
+			map[string]string{"AUDIO": "audio", "SUBTITLES": "subs"},
+		},
+	}
+	for _, tc := range tests {
+		got := parseHLSAttributes(tc.input)
+		for k, v := range tc.want {
+			if got[k] != v {
+				t.Errorf("parseHLSAttributes(%q)[%q] = %q, want %q", tc.input, k, got[k], v)
+			}
+		}
+	}
+}
+
+func TestResolveURL(t *testing.T) {
+	tests := []struct {
+		base string
+		ref  string
+		want string
+	}{
+		{
+			"https://cdn.example.com/streams/episode1/master.m3u8",
+			"1080p/main.m3u8",
+			"https://cdn.example.com/streams/episode1/1080p/main.m3u8",
+		},
+		{
+			"https://cdn.example.com/streams/episode1/master.m3u8",
+			"https://other.com/stream.m3u8",
+			"https://other.com/stream.m3u8",
+		},
+	}
+	for _, tc := range tests {
+		got := resolveURL(tc.base, tc.ref)
+		if got != tc.want {
+			t.Errorf("resolveURL(%q, %q) = %q, want %q", tc.base, tc.ref, got, tc.want)
+		}
+	}
+}
+
+func TestResolveM3U8Variants(t *testing.T) {
+	master := `#EXTM3U
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",URI="audio.m3u8",DEFAULT=YES
+#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=1920x1080,CODECS="avc1"
+1080p/video.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=4000000,RESOLUTION=1280x720,CODECS="avc1"
+720p/video.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=1500000,RESOLUTION=854x480,CODECS="avc1"
+480p/video.m3u8
+`
+	client := &Client{
+		httpClient: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				return jsonResponse(200, master), nil
+			}),
+		},
+		siteURL:   mustParseURL("https://allanime.to"),
+		userAgent: "test",
+	}
+
+	streams, err := client.resolveM3U8Variants(context.Background(), mustParseURL("https://cdn.example.com/master.m3u8"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(streams) != 3 {
+		t.Fatalf("expected 3 variants, got %d", len(streams))
+	}
+	// First variant should be 1080p with highest bandwidth
+	if streams[0].Quality != "1080p" {
+		t.Errorf("streams[0].Quality = %q, want 1080p", streams[0].Quality)
+	}
+	if streams[0].Bandwidth != 8000000 {
+		t.Errorf("streams[0].Bandwidth = %d, want 8000000", streams[0].Bandwidth)
+	}
+	if streams[1].Quality != "720p" {
+		t.Errorf("streams[1].Quality = %q, want 720p", streams[1].Quality)
+	}
+	if streams[2].Quality != "480p" {
+		t.Errorf("streams[2].Quality = %q, want 480p", streams[2].Quality)
+	}
+	// URLs should be resolved relative to master
+	if !strings.HasSuffix(streams[0].URL, "/1080p/video.m3u8") {
+		t.Errorf("streams[0].URL = %q, want relative resolved URL", streams[0].URL)
+	}
+}
+
+func TestResolveM3U8VariantsMediaPlaylist(t *testing.T) {
+	// A media playlist (no #EXT-X-STREAM-INF) should fall back to a single stream.
+	media := `#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:10
+#EXTINF:10.0,
+segment1.ts
+`
+	client := &Client{
+		httpClient: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				return jsonResponse(200, media), nil
+			}),
+		},
+		siteURL:   mustParseURL("https://allanime.to"),
+		userAgent: "test",
+	}
+
+	streams, err := client.resolveM3U8Variants(context.Background(), mustParseURL("https://cdn.example.com/video.m3u8"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(streams) != 1 {
+		t.Fatalf("expected 1 fallback stream, got %d", len(streams))
+	}
+	if streams[0].URL != "https://cdn.example.com/video.m3u8" {
+		t.Errorf("fallback URL = %q, want original", streams[0].URL)
+	}
+}
+
+func mustParseURL(s string) *url.URL {
+	u, err := url.Parse(s)
+	if err != nil {
+		panic(err)
+	}
+	return u
 }
