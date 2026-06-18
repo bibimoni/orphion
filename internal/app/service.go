@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/pterm/pterm"
 
@@ -98,6 +99,11 @@ func (s *Service) Search(ctx context.Context, query, kind string) (SearchResult,
 }
 
 // ResolveID resolves a search query to a single anime ID.
+//
+// When a search returns multiple results, an exact title match (case- and
+// punctuation-insensitive) is used to disambiguate. This lets users resolve
+// shows like "Sentenced to Be a Hero" even when a sequel ("... Season 2") is
+// returned alongside it. If no exact match exists, the ambiguity is reported.
 func (s *Service) ResolveID(ctx context.Context, query, kind string) (string, error) {
 	results, err := s.provider.Search(ctx, query, kind)
 	if err != nil {
@@ -107,9 +113,57 @@ func (s *Service) ResolveID(ctx context.Context, query, kind string) (string, er
 		return "", fmt.Errorf("no results for %s %q", kind, query)
 	}
 	if len(results) > 1 {
+		if id, ok := resolveByExactTitle(query, results); ok {
+			return id, nil
+		}
 		return "", fmt.Errorf("ambiguous search for %s %q: %d results", kind, query, len(results))
 	}
 	return results[0].ID, nil
+}
+
+// resolveByExactTitle returns the ID of the single result whose normalized
+// title matches the query exactly. Returns ok=false when there is no match,
+// or when more than one result matches (ambiguous even after normalization).
+func resolveByExactTitle(query string, results []provider.Anime) (string, bool) {
+	want := normalizeTitle(query)
+	if want == "" {
+		return "", false
+	}
+	var match string
+	for _, r := range results {
+		if normalizeTitle(r.Title) != want {
+			continue
+		}
+		if match != "" {
+			return "", false // more than one exact match
+		}
+		match = r.ID
+	}
+	if match == "" {
+		return "", false
+	}
+	return match, true
+}
+
+// normalizeTitle lowercases a title and strips all non-alphanumeric
+// characters (replacing them with single spaces) so that differences in
+// case, punctuation, and spacing do not prevent an exact match.
+func normalizeTitle(title string) string {
+	var b strings.Builder
+	b.Grow(len(title))
+	prevSpace := false
+	for _, r := range title {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(unicode.ToLower(r))
+			prevSpace = false
+			continue
+		}
+		if !prevSpace {
+			b.WriteByte(' ')
+			prevSpace = true
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // SetProgressCallback sets the callback invoked with download progress updates.
@@ -322,40 +376,37 @@ func (s *Service) executeJob(ctx context.Context, job download.Job) (string, err
 		return "", fmt.Errorf("no streams for episode %s", job.Episode)
 	}
 
-	qualityStreams := make([]quality.Stream, len(streams))
-	for j, st := range streams {
-		qualityStreams[j] = quality.Stream{
-			URL:       st.URL,
-			Quality:   st.Quality,
-			Bandwidth: st.Bandwidth,
-		}
-	}
-	result := quality.Select(s.config.PreferredQty, qualityStreams)
-
-	// Find the exact provider stream selected by the quality layer.
-	var selectedStream provider.Stream
-	for _, st := range streams {
-		if st.URL == result.Stream.URL {
-			selectedStream = st
-			break
-		}
-	}
-	if selectedStream.URL == "" {
+	candidates := orderStreams(s.config.PreferredQty, streams)
+	if len(candidates) == 0 {
 		return "", fmt.Errorf("selected stream is unavailable")
 	}
+	selectedStream := candidates[0]
 
 	if preparer, ok := s.provider.(provider.StreamPreparer); ok {
-		selectedStream, err = preparer.PrepareStream(ctx, selectedStream, func(done, total int) {
-			if s.progressCb != nil {
-				s.progressCb(job.Episode, ffmpeg.Progress{
-					Phase:         "segments",
-					SegmentsDone:  done,
-					SegmentsTotal: total,
-				})
+		var prepareErr error
+		for _, candidate := range candidates {
+			prepared, err := preparer.PrepareStream(ctx, candidate, func(done, total int) {
+				if s.progressCb != nil {
+					s.progressCb(job.Episode, ffmpeg.Progress{
+						Phase:         "segments",
+						SegmentsDone:  done,
+						SegmentsTotal: total,
+					})
+				}
+			})
+			if err == nil {
+				selectedStream = prepared
+				prepareErr = nil
+				break
 			}
-		})
-		if err != nil {
-			return "", fmt.Errorf("prepare stream: %w", err)
+			cleanupTempInput(prepared.URL)
+			prepareErr = err
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return "", ctxErr
+			}
+		}
+		if prepareErr != nil {
+			return "", fmt.Errorf("prepare stream: %w", prepareErr)
 		}
 	}
 	streamURL := selectedStream.URL
@@ -405,6 +456,39 @@ func (s *Service) executeJob(ctx context.Context, job download.Job) (string, err
 	}
 
 	return outPath, nil
+}
+
+func orderStreams(preferred string, streams []provider.Stream) []provider.Stream {
+	remaining := append([]provider.Stream(nil), streams...)
+	ordered := make([]provider.Stream, 0, len(streams))
+
+	for len(remaining) > 0 {
+		qualityStreams := make([]quality.Stream, len(remaining))
+		for i, stream := range remaining {
+			qualityStreams[i] = quality.Stream{
+				URL:       stream.URL,
+				Quality:   stream.Quality,
+				Bandwidth: stream.Bandwidth,
+			}
+		}
+		selected := quality.Select(preferred, qualityStreams).Stream
+		selectedIndex := -1
+		for i, stream := range remaining {
+			if stream.URL == selected.URL &&
+				stream.Quality == selected.Quality &&
+				stream.Bandwidth == selected.Bandwidth {
+				selectedIndex = i
+				break
+			}
+		}
+		if selectedIndex < 0 {
+			ordered = append(ordered, remaining...)
+			break
+		}
+		ordered = append(ordered, remaining[selectedIndex])
+		remaining = append(remaining[:selectedIndex], remaining[selectedIndex+1:]...)
+	}
+	return ordered
 }
 
 // SetOutputDir updates the output directory.
